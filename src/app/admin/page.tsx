@@ -15,26 +15,21 @@ export default function AdminPage() {
   const [visibleCount, setVisibleCount] = useState(30);
   const loaderRef = useRef<HTMLDivElement>(null);
   
-  // 控制回顶部按钮的显示
   const [showBackToTop, setShowBackToTop] = useState(false);
 
-  // 🔥 修复：增强滚动监听逻辑
   useEffect(() => {
     const handleScroll = () => {
-      // 同时检查 window 和 document.documentElement 的滚动高度
       const scrollTop = window.scrollY || document.documentElement.scrollTop;
       setShowBackToTop(scrollTop > 300);
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
-    // 初始化时执行一次，防止刷新时已在页面下方
     handleScroll(); 
 
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   const scrollToTop = () => {
-    // 🔥 修复：让 window 和 document.documentElement 都回到顶部
     window.scrollTo({ top: 0, behavior: 'smooth' });
     document.documentElement.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -64,7 +59,6 @@ export default function AdminPage() {
     }
   };
 
-  // 滚动到底部自动加载更多
   useEffect(() => {
     if (!isLoggedIn || !loaderRef.current) return;
     const observer = new IntersectionObserver((entries) => {
@@ -159,7 +153,7 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8 relative">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">图库管理后台</h1>
@@ -192,15 +186,17 @@ export default function AdminPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {/* 🔥 修改：使用 CSS Columns 实现真正的瀑布流（横屏保持横屏，竖屏保持竖屏） */}
+        <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-4">
           {images.slice(0, visibleCount).map((img) => (
-            <div key={img.sha} className="group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
+            <div key={img.sha} className="break-inside-avoid mb-4 group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
               
-              <div className="aspect-square bg-neutral-200 dark:bg-neutral-800 relative animate-pulse">
+              {/* 图片容器：去掉固定的 aspect-square，高度由图片自身决定 */}
+              <div className="relative bg-neutral-200 dark:bg-neutral-800 min-h-[100px] animate-pulse">
                 <img
                   src={img.download_url}
                   alt={img.name}
-                  className="w-full h-full object-cover transition-opacity duration-500 opacity-0 relative z-10"
+                  className="w-full h-auto object-cover transition-opacity duration-500 opacity-0 relative z-10"
                   loading="lazy"
                   onError={(e) => {
                     const target = e.currentTarget;
@@ -218,16 +214,16 @@ export default function AdminPage() {
                 />
               </div>
 
-              <div className="p-2">
-                <p className="text-xs truncate text-neutral-600 dark:text-neutral-400" title={img.name}>
+              <div className="p-3">
+                <p className="text-xs truncate text-neutral-600 dark:text-neutral-400 font-mono" title={img.name}>
                   {img.name}
                 </p>
               </div>
               
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
+              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
                 <button
                   onClick={() => deleteImage(img.path, img.sha, img.name)}
-                  className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors"
+                  className="bg-red-500 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors shadow-lg"
                 >
                   删除
                 </button>
@@ -243,7 +239,6 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* 🔥 调整后的回顶部按钮：增加了层级和对比度 */}
       <button
         onClick={scrollToTop}
         className={`fixed bottom-8 right-8 p-3.5 rounded-full bg-black text-white dark:bg-white dark:text-black shadow-2xl transition-all duration-300 z-[9999] hover:scale-110 flex items-center justify-center ${
