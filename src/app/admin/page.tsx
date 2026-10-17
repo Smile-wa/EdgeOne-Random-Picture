@@ -12,9 +12,25 @@ export default function AdminPage() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // ⚡ 优化：分页渲染，防止 DOM 过多卡顿
+  // 分页渲染
   const [visibleCount, setVisibleCount] = useState(30);
   const loaderRef = useRef<HTMLDivElement>(null);
+  
+  // 一键回到顶部按钮的显示状态
+  const [showBackToTop, setShowBackToTop] = useState(false);
+
+  // 监听滚动事件，控制“回到顶部”按钮的显示
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 300);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleLogin = async () => {
     if (!password) {
@@ -41,7 +57,7 @@ export default function AdminPage() {
     }
   };
 
-  // ⚡ 优化：滚动到底部自动加载更多
+  // 滚动到底部自动加载更多
   useEffect(() => {
     if (!isLoggedIn || !loaderRef.current) return;
     const observer = new IntersectionObserver((entries) => {
@@ -135,7 +151,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8">
+    <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8 relative">
       <div className="max-w-6xl mx-auto">
         <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
           <div>
@@ -172,21 +188,28 @@ export default function AdminPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {images.slice(0, visibleCount).map((img) => (
             <div key={img.sha} className="group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
-              <div className="aspect-square bg-neutral-100 dark:bg-neutral-800 relative">
+              
+              {/* ⚡ 优化：骨架屏与平滑淡入 */}
+              <div className="aspect-square bg-neutral-200 dark:bg-neutral-800 relative animate-pulse">
                 <img
                   src={img.download_url}
                   alt={img.name}
-                  className="w-full h-full object-cover transition-opacity duration-300 opacity-0"
+                  className="w-full h-full object-cover transition-opacity duration-500 opacity-0 relative z-10"
                   loading="lazy"
-                  onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+                  onLoad={(e) => {
+                    e.currentTarget.style.opacity = '1';
+                    e.currentTarget.parentElement?.classList.remove('animate-pulse');
+                  }}
                 />
               </div>
+
               <div className="p-2">
                 <p className="text-xs truncate text-neutral-600 dark:text-neutral-400" title={img.name}>
                   {img.name}
                 </p>
               </div>
-              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              
+              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
                 <button
                   onClick={() => deleteImage(img.path, img.sha, img.name)}
                   className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors"
@@ -198,13 +221,27 @@ export default function AdminPage() {
           ))}
         </div>
 
-        {/* ⚡ 滚动到底部自动加载 */}
+        {/* 滚动到底部自动加载 */}
         {visibleCount < images.length && (
           <div ref={loaderRef} className="py-8 text-center text-sm text-neutral-400">
             正在加载更多图片...
           </div>
         )}
       </div>
+
+      {/* ⚡ 新增：一键回到顶部按钮 */}
+      <button
+        onClick={scrollToTop}
+        className={`fixed bottom-8 right-8 p-3 rounded-full bg-black/80 dark:bg-white/80 text-white dark:text-black shadow-lg backdrop-blur-md transition-all duration-300 z-50 hover:scale-110 ${
+          showBackToTop ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10 pointer-events-none'
+        }`}
+        aria-label="回到顶部"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+        </svg>
+      </button>
+
     </div>
   );
 }
