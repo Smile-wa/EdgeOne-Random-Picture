@@ -1,7 +1,7 @@
 // src/app/admin/page.tsx
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 export default function AdminPage() {
@@ -12,7 +12,10 @@ export default function AdminPage() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // 1. 登录并读取图片列表
+  // ⚡ 优化：分页渲染，防止 DOM 过多卡顿
+  const [visibleCount, setVisibleCount] = useState(30);
+  const loaderRef = useRef<HTMLDivElement>(null);
+
   const handleLogin = async () => {
     if (!password) {
       setMessage('请输入管理密码');
@@ -26,13 +29,11 @@ export default function AdminPage() {
       });
       
       const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || '密码错误或服务器错误');
-      }
+      if (!res.ok) throw new Error(data.error || '密码错误或服务器错误');
       
       setImages(data);
       setIsLoggedIn(true);
+      setVisibleCount(30); // 重置分页
     } catch (err: any) {
       setMessage(err.message);
     } finally {
@@ -40,27 +41,31 @@ export default function AdminPage() {
     }
   };
 
-  // 2. 删除图片
+  // ⚡ 优化：滚动到底部自动加载更多
+  useEffect(() => {
+    if (!isLoggedIn || !loaderRef.current) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && visibleCount < images.length) {
+        setVisibleCount(prev => prev + 30);
+      }
+    }, { rootMargin: '100px' });
+    observer.observe(loaderRef.current);
+    return () => observer.disconnect();
+  }, [isLoggedIn, visibleCount, images.length]);
+
   const deleteImage = async (path: string, sha: string, name: string) => {
     if (!confirm(`确定要删除图片 ${name} 吗？\n删除后 EdgeOne 将自动重新构建。`)) return;
-
     setMessage(`正在删除 ${name}...`);
     try {
       const res = await fetch('/api/github', {
         method: 'DELETE',
-        headers: { 
-          'Authorization': `Bearer ${password}`,
-          'Content-Type': 'application/json' 
-        },
+        headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ path, sha, name }),
       });
-
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || '删除失败');
       }
-      
-      // 删除成功后，从本地列表中移除
       setImages(prev => prev.filter(img => img.sha !== sha));
       setMessage(`✅ ${name} 删除成功！等待 EdgeOne 构建生效。`);
     } catch (err: any) {
@@ -68,25 +73,19 @@ export default function AdminPage() {
     }
   };
 
-  // 3. 上传图片
   const uploadImage = async (file: File) => {
     if (!password) return;
     setUploading(true);
     setMessage(`正在上传 ${file.name}...`);
     
     try {
-      // 将文件转为 Base64
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = async () => {
         const base64Content = (reader.result as string).split(',')[1];
-        
         const res = await fetch('/api/github', {
           method: 'PUT',
-          headers: { 
-            'Authorization': `Bearer ${password}`,
-            'Content-Type': 'application/json' 
-          },
+          headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: file.name, base64Content }),
         });
 
@@ -96,8 +95,7 @@ export default function AdminPage() {
         }
         
         setMessage(`✅ ${file.name} 上传成功！等待 EdgeOne 构建生效。`);
-        // 重新拉取列表
-        handleLogin(); 
+        handleLogin(); // 重新拉取列表
         setUploading(false);
       };
     } catch (err: any) {
@@ -106,7 +104,6 @@ export default function AdminPage() {
     }
   };
 
-  // 未登录时的界面
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-black p-4">
@@ -124,7 +121,7 @@ export default function AdminPage() {
           <button
             onClick={handleLogin}
             disabled={loading}
-            className="w-full bg-black dark:bg-white text-white dark:text-black py-3 rounded-lg font-bold hover:opacity-80 transition-opacity disabled:opacity-50"
+            className="w-full bg-black dark:bg-white text-white dark:text-black py-3 rounded-lg font-bold hover:opacity-80 transition-opacity disabled:opacity-50 flex justify-center items-center gap-2"
           >
             {loading ? '验证中...' : '进入后台'}
           </button>
@@ -137,7 +134,6 @@ export default function AdminPage() {
     );
   }
 
-  // 登录成功后的管理界面
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
@@ -174,14 +170,15 @@ export default function AdminPage() {
         )}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {images.map((img) => (
+          {images.slice(0, visibleCount).map((img) => (
             <div key={img.sha} className="group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
               <div className="aspect-square bg-neutral-100 dark:bg-neutral-800 relative">
                 <img
                   src={img.download_url}
                   alt={img.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover transition-opacity duration-300 opacity-0"
                   loading="lazy"
+                  onLoad={(e) => (e.currentTarget.style.opacity = '1')}
                 />
               </div>
               <div className="p-2">
@@ -200,6 +197,13 @@ export default function AdminPage() {
             </div>
           ))}
         </div>
+
+        {/* ⚡ 滚动到底部自动加载 */}
+        {visibleCount < images.length && (
+          <div ref={loaderRef} className="py-8 text-center text-sm text-neutral-400">
+            正在加载更多图片...
+          </div>
+        )}
       </div>
     </div>
   );
