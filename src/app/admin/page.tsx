@@ -12,14 +12,10 @@ export default function AdminPage() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // 分页渲染
   const [visibleCount, setVisibleCount] = useState(30);
   const loaderRef = useRef<HTMLDivElement>(null);
-  
-  // 一键回到顶部按钮的显示状态
   const [showBackToTop, setShowBackToTop] = useState(false);
 
-  // 监听滚动事件，控制“回到顶部”按钮的显示
   useEffect(() => {
     const handleScroll = () => {
       setShowBackToTop(window.scrollY > 300);
@@ -49,7 +45,7 @@ export default function AdminPage() {
       
       setImages(data);
       setIsLoggedIn(true);
-      setVisibleCount(30); // 重置分页
+      setVisibleCount(30); 
     } catch (err: any) {
       setMessage(err.message);
     } finally {
@@ -57,14 +53,13 @@ export default function AdminPage() {
     }
   };
 
-  // 滚动到底部自动加载更多
   useEffect(() => {
     if (!isLoggedIn || !loaderRef.current) return;
     const observer = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && visibleCount < images.length) {
         setVisibleCount(prev => prev + 30);
       }
-    }, { rootMargin: '100px' });
+    }, { rootMargin: '200px' });
     observer.observe(loaderRef.current);
     return () => observer.disconnect();
   }, [isLoggedIn, visibleCount, images.length]);
@@ -111,7 +106,7 @@ export default function AdminPage() {
         }
         
         setMessage(`✅ ${file.name} 上传成功！等待 EdgeOne 构建生效。`);
-        handleLogin(); // 重新拉取列表
+        handleLogin(); 
         setUploading(false);
       };
     } catch (err: any) {
@@ -139,7 +134,12 @@ export default function AdminPage() {
             disabled={loading}
             className="w-full bg-black dark:bg-white text-white dark:text-black py-3 rounded-lg font-bold hover:opacity-80 transition-opacity disabled:opacity-50 flex justify-center items-center gap-2"
           >
-            {loading ? '验证中...' : '进入后台'}
+            {loading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white dark:text-black" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                验证中...
+              </>
+            ) : '进入后台'}
           </button>
           {message && <p className="mt-4 text-sm text-red-500 text-center">{message}</p>}
           <div className="mt-6 text-center">
@@ -162,7 +162,8 @@ export default function AdminPage() {
             <Link href="/gallery" className="px-4 py-2 bg-neutral-200 dark:bg-white/10 rounded-lg text-sm font-medium hover:bg-neutral-300 dark:hover:bg-white/20 transition-colors">
               返回图库
             </Link>
-            <label className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold cursor-pointer hover:bg-blue-700 transition-colors">
+            <label className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold cursor-pointer hover:bg-blue-700 transition-colors flex items-center gap-2">
+              {uploading && <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
               {uploading ? '上传中...' : '上传新图片'}
               <input
                 type="file"
@@ -189,13 +190,25 @@ export default function AdminPage() {
           {images.slice(0, visibleCount).map((img) => (
             <div key={img.sha} className="group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
               
-              {/* ⚡ 优化：骨架屏与平滑淡入 */}
               <div className="aspect-square bg-neutral-200 dark:bg-neutral-800 relative animate-pulse">
                 <img
                   src={img.download_url}
                   alt={img.name}
                   className="w-full h-full object-cover transition-opacity duration-500 opacity-0 relative z-10"
                   loading="lazy"
+                  // ⚡ 容错机制：如果 CDN 压缩图挂了，自动降级为 GitHub 原生图片链接
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (!target.src.includes('githubusercontent')) {
+                      // 如果当前不是原生链接，则替换为原生链接
+                      const rawUrl = `https://raw.githubusercontent.com/Smile-wa/EdgeOne-Random-Picture/main/public/images/${img.name}`;
+                      target.src = rawUrl;
+                    } else {
+                      // 如果原生也挂了，显示灰色占位
+                      target.style.opacity = '1';
+                      target.parentElement?.classList.remove('animate-pulse');
+                    }
+                  }}
                   onLoad={(e) => {
                     e.currentTarget.style.opacity = '1';
                     e.currentTarget.parentElement?.classList.remove('animate-pulse');
@@ -221,15 +234,14 @@ export default function AdminPage() {
           ))}
         </div>
 
-        {/* 滚动到底部自动加载 */}
         {visibleCount < images.length && (
-          <div ref={loaderRef} className="py-8 text-center text-sm text-neutral-400">
-            正在加载更多图片...
+          <div ref={loaderRef} className="py-8 flex justify-center items-center text-sm text-neutral-400">
+             <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+             正在加载更多...
           </div>
         )}
       </div>
 
-      {/* ⚡ 新增：一键回到顶部按钮 */}
       <button
         onClick={scrollToTop}
         className={`fixed bottom-8 right-8 p-3 rounded-full bg-black/80 dark:bg-white/80 text-white dark:text-black shadow-lg backdrop-blur-md transition-all duration-300 z-50 hover:scale-110 ${
