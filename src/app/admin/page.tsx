@@ -22,10 +22,8 @@ export default function AdminPage() {
       const scrollTop = window.scrollY || document.documentElement.scrollTop;
       setShowBackToTop(scrollTop > 300);
     };
-
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll(); 
-
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -152,31 +150,17 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8 relative">
+    <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8 relative pb-24">
       <div className="max-w-7xl mx-auto">
-        <div className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
+        <div className="flex items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">图库管理后台</h1>
             <p className="text-sm text-neutral-500">共 {images.length} 张图片</p>
           </div>
-          <div className="flex gap-4">
+          <div>
             <Link href="/gallery" className="px-4 py-2 bg-neutral-200 dark:bg-white/10 rounded-lg text-sm font-medium hover:bg-neutral-300 dark:hover:bg-white/20 transition-colors">
               返回图库
             </Link>
-            <label className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold cursor-pointer hover:bg-blue-700 transition-colors">
-              {uploading ? '上传中...' : '上传新图片'}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                disabled={uploading}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) uploadImage(file);
-                  e.target.value = ''; 
-                }}
-              />
-            </label>
           </div>
         </div>
 
@@ -186,12 +170,10 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* 🔥 修改：使用 CSS Columns 实现真正的瀑布流（横屏保持横屏，竖屏保持竖屏） */}
         <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-4">
           {images.slice(0, visibleCount).map((img) => (
             <div key={img.sha} className="break-inside-avoid mb-4 group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
               
-              {/* 图片容器：去掉固定的 aspect-square，高度由图片自身决定 */}
               <div className="relative bg-neutral-200 dark:bg-neutral-800 min-h-[100px] animate-pulse">
                 <img
                   src={img.download_url}
@@ -239,9 +221,37 @@ export default function AdminPage() {
         )}
       </div>
 
+      {/* 🔥 悬浮上传按钮 (替换掉原本的顶部按钮) */}
+      <div className="fixed bottom-24 right-6 z-[9999]">
+        <label className="flex items-center justify-center w-14 h-14 bg-blue-600 text-white rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] cursor-pointer hover:bg-blue-700 transition-all hover:scale-110">
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) uploadImage(file);
+              e.target.value = ''; 
+            }}
+          />
+          {uploading ? (
+            <svg className="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+          )}
+        </label>
+      </div>
+
+      {/* 回顶部按钮 */}
       <button
         onClick={scrollToTop}
-        className={`fixed bottom-8 right-8 p-3.5 rounded-full bg-black text-white dark:bg-white dark:text-black shadow-2xl transition-all duration-300 z-[9999] hover:scale-110 flex items-center justify-center ${
+        className={`fixed bottom-8 right-6 p-3.5 rounded-full bg-black text-white dark:bg-white dark:text-black shadow-2xl transition-all duration-300 z-[9999] hover:scale-110 flex items-center justify-center ${
           showBackToTop ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10 pointer-events-none'
         }`}
         aria-label="回到顶部"
