@@ -16,6 +16,7 @@ export default function AdminPage() {
   const loaderRef = useRef<HTMLDivElement>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
 
+  // 监听滚动，控制回到顶部按钮
   useEffect(() => {
     const handleScroll = () => {
       const scrollTop = window.scrollY || document.documentElement.scrollTop;
@@ -57,6 +58,7 @@ export default function AdminPage() {
     }
   };
 
+  // 滚动到底部自动加载更多
   useEffect(() => {
     if (!isLoggedIn || !loaderRef.current) return;
     const observer = new IntersectionObserver((entries) => {
@@ -88,45 +90,49 @@ export default function AdminPage() {
     }
   };
 
-  // 🔥 多选上传核心逻辑
+  // 🔥 并发多选上传逻辑（速度快）
   const uploadImages = async (files: FileList) => {
     if (!password) return;
     setUploading(true);
     const total = files.length;
     let successCount = 0;
 
-    for (let i = 0; i < total; i++) {
-      const file = files[i];
-      setMessage(`正在上传 (${i + 1}/${total}): ${file.name}...`);
-      
-      try {
-        // 将文件转为 Base64
-        const base64Content = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.readAsDataURL(file);
-          reader.onload = () => resolve((reader.result as string).split(',')[1]);
-          reader.onerror = reject;
-        });
+    setMessage(`正在并发上传 ${total} 张图片...`);
 
-        const res = await fetch('/api/github', {
-          method: 'PUT',
-          headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: file.name, base64Content }),
-        });
+    const fileArray = Array.from(files);
 
-        if (res.ok) {
-          successCount++;
-        } else {
-          const data = await res.json();
-          console.error(`${file.name} 上传失败:`, data.error);
+    // 使用 Promise.all 并发处理多个文件的上传
+    await Promise.all(
+      fileArray.map(async (file) => {
+        try {
+          // 将文件转为 Base64
+          const base64Content = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = () => resolve((reader.result as string).split(',')[1]);
+            reader.onerror = reject;
+          });
+
+          const res = await fetch('/api/github', {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: file.name, base64Content }),
+          });
+
+          if (res.ok) {
+            successCount++;
+          } else {
+            const data = await res.json();
+            console.error(`${file.name} 上传失败:`, data.error);
+          }
+        } catch (err) {
+          console.error(`${file.name} 上传异常:`, err);
         }
-      } catch (err) {
-        console.error(`${file.name} 上传异常:`, err);
-      }
-    }
+      })
+    );
 
     setMessage(`✅ 批量上传完成！成功 ${successCount}/${total} 张。等待 EdgeOne 构建生效。`);
-    handleLogin(); // 刷新列表
+    handleLogin(); 
     setUploading(false);
   };
 
@@ -181,6 +187,7 @@ export default function AdminPage() {
           </div>
         )}
 
+        {/* 瀑布流布局 (横屏保持横屏，竖屏保持竖屏) */}
         <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-4">
           {images.slice(0, visibleCount).map((img) => (
             <div key={img.sha} className="break-inside-avoid mb-4 group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
@@ -234,13 +241,16 @@ export default function AdminPage() {
         <label className="flex items-center justify-center w-14 h-14 bg-blue-600 text-white rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] cursor-pointer hover:bg-blue-700 transition-all hover:scale-110">
           <input
             type="file"
-            accept="image/*"
+            // 🔥 增加更精确的 accept 格式，兼容部分手机的多选逻辑
+            accept="image/*,image/jpeg,image/png,image/webp,image/gif"
             multiple // 🔥 开启多选
             className="hidden"
             disabled={uploading}
             onChange={(e) => {
               const files = e.target.files;
-              if (files && files.length > 0) uploadImages(files);
+              if (files && files.length > 0) {
+                uploadImages(files);
+              }
               e.target.value = ''; 
             }}
           />
@@ -257,6 +267,7 @@ export default function AdminPage() {
         </label>
       </div>
 
+      {/* 悬浮回到顶部按钮 */}
       <button
         onClick={scrollToTop}
         className={`fixed bottom-8 right-6 p-3.5 rounded-full bg-black text-white dark:bg-white dark:text-black shadow-2xl transition-all duration-300 z-[9999] hover:scale-110 flex items-center justify-center ${
