@@ -14,7 +14,6 @@ export default function AdminPage() {
 
   const [visibleCount, setVisibleCount] = useState(30);
   const loaderRef = useRef<HTMLDivElement>(null);
-  
   const [showBackToTop, setShowBackToTop] = useState(false);
 
   useEffect(() => {
@@ -32,8 +31,8 @@ export default function AdminPage() {
     document.documentElement.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleLogin = async () => {
-    if (!password) {
+  const handleLogin = async (pwd = password) => {
+    if (!pwd) {
       setMessage('请输入管理密码');
       return;
     }
@@ -41,7 +40,7 @@ export default function AdminPage() {
     setMessage('');
     try {
       const res = await fetch('/api/github', {
-        headers: { Authorization: `Bearer ${password}` },
+        headers: { Authorization: `Bearer ${pwd}` },
       });
       
       const data = await res.json();
@@ -49,6 +48,7 @@ export default function AdminPage() {
       
       setImages(data);
       setIsLoggedIn(true);
+      setPassword(pwd); // 保存密码用于后续操作
       setVisibleCount(30); 
     } catch (err: any) {
       setMessage(err.message);
@@ -88,35 +88,46 @@ export default function AdminPage() {
     }
   };
 
-  const uploadImage = async (file: File) => {
+  // 🔥 多选上传核心逻辑
+  const uploadImages = async (files: FileList) => {
     if (!password) return;
     setUploading(true);
-    setMessage(`正在上传 ${file.name}...`);
-    
-    try {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = async () => {
-        const base64Content = (reader.result as string).split(',')[1];
+    const total = files.length;
+    let successCount = 0;
+
+    for (let i = 0; i < total; i++) {
+      const file = files[i];
+      setMessage(`正在上传 (${i + 1}/${total}): ${file.name}...`);
+      
+      try {
+        // 将文件转为 Base64
+        const base64Content = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+          reader.onerror = reject;
+        });
+
         const res = await fetch('/api/github', {
           method: 'PUT',
           headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: file.name, base64Content }),
         });
 
-        if (!res.ok) {
+        if (res.ok) {
+          successCount++;
+        } else {
           const data = await res.json();
-          throw new Error(data.error || '上传失败');
+          console.error(`${file.name} 上传失败:`, data.error);
         }
-        
-        setMessage(`✅ ${file.name} 上传成功！等待 EdgeOne 构建生效。`);
-        handleLogin(); 
-        setUploading(false);
-      };
-    } catch (err: any) {
-      setMessage(`❌ 上传失败: ${err.message}`);
-      setUploading(false);
+      } catch (err) {
+        console.error(`${file.name} 上传异常:`, err);
+      }
     }
+
+    setMessage(`✅ 批量上传完成！成功 ${successCount}/${total} 张。等待 EdgeOne 构建生效。`);
+    handleLogin(); // 刷新列表
+    setUploading(false);
   };
 
   if (!isLoggedIn) {
@@ -124,17 +135,17 @@ export default function AdminPage() {
       <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-black p-4">
         <div className="max-w-md w-full bg-white dark:bg-[#1a1a1a] p-8 rounded-2xl shadow-xl border border-neutral-200 dark:border-white/10">
           <h1 className="text-2xl font-bold mb-6 text-neutral-900 dark:text-white text-center">图库管理后台</h1>
-          <p className="text-sm text-neutral-500 mb-4">请输入管理密码以验证身份。</p>
+          <p className="text-sm text-neutral-500 mb-4">请输入管理密码 (本地开发默认: admin123)</p>
           <input
             type="password"
-            placeholder="输入 ADMIN_PASSWORD"
+            placeholder="输入密码"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
             className="w-full px-4 py-3 rounded-lg bg-neutral-100 dark:bg-neutral-800 border border-neutral-300 dark:border-white/10 mb-4 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-neutral-500"
           />
           <button
-            onClick={handleLogin}
+            onClick={() => handleLogin()}
             disabled={loading}
             className="w-full bg-black dark:bg-white text-white dark:text-black py-3 rounded-lg font-bold hover:opacity-80 transition-opacity disabled:opacity-50 flex justify-center items-center gap-2"
           >
@@ -173,7 +184,6 @@ export default function AdminPage() {
         <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-4">
           {images.slice(0, visibleCount).map((img) => (
             <div key={img.sha} className="break-inside-avoid mb-4 group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
-              
               <div className="relative bg-neutral-200 dark:bg-neutral-800 min-h-[100px] animate-pulse">
                 <img
                   src={img.download_url}
@@ -195,13 +205,11 @@ export default function AdminPage() {
                   }}
                 />
               </div>
-
               <div className="p-3">
                 <p className="text-xs truncate text-neutral-600 dark:text-neutral-400 font-mono" title={img.name}>
                   {img.name}
                 </p>
               </div>
-              
               <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
                 <button
                   onClick={() => deleteImage(img.path, img.sha, img.name)}
@@ -221,17 +229,18 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* 🔥 悬浮上传按钮 (替换掉原本的顶部按钮) */}
+      {/* 悬浮多选上传按钮 */}
       <div className="fixed bottom-24 right-6 z-[9999]">
         <label className="flex items-center justify-center w-14 h-14 bg-blue-600 text-white rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] cursor-pointer hover:bg-blue-700 transition-all hover:scale-110">
           <input
             type="file"
             accept="image/*"
+            multiple // 🔥 开启多选
             className="hidden"
             disabled={uploading}
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) uploadImage(file);
+              const files = e.target.files;
+              if (files && files.length > 0) uploadImages(files);
               e.target.value = ''; 
             }}
           />
@@ -248,7 +257,6 @@ export default function AdminPage() {
         </label>
       </div>
 
-      {/* 回顶部按钮 */}
       <button
         onClick={scrollToTop}
         className={`fixed bottom-8 right-6 p-3.5 rounded-full bg-black text-white dark:bg-white dark:text-black shadow-2xl transition-all duration-300 z-[9999] hover:scale-110 flex items-center justify-center ${
