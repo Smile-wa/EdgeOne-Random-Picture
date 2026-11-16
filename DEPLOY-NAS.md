@@ -402,6 +402,34 @@ Docker Hub 国内直连超时。按第 4.3 步的方法处理：配置镜像加�
 ### Q8：想换回 GitHub 存储？
 留空/删除 `NAS_API_URL` 等变量重新部署，项目自动回退到本地 `images-metadata.json` 模式（或用 git 历史恢复旧版 `/api/github`）。
 
+### 🔥 Q8-1：部署完成，但图片还是 GitHub 上的旧图 / 没变？
+这是最常见的问题，**代码已全部切到 NAS，根因一定是配置或缓存**。按顺序排查：
+
+**第 1 步：访问诊断接口**
+浏览器打开 `https://你的站点/api/debug`，看返回的 `conclusion` 字段：
+
+- `❌ NAS_API_URL 未配置` → EdgeOne 环境变量没生效：
+  - 确认在 EdgeOne Pages 控制台**正确添加了 `NAS_API_URL`**（不是加在本地 `.env.local`，线上要加在控制台）
+  - 变量名**逐字符一致**：`NAS_API_URL`（不是 `NAS-URL`、`NASAPIURL`）
+  - 添加后必须**重新部署**才生效
+- `❌ 无法访问 NAS` → EdgeOne 云端连不上你的飞牛域名：
+  - 终端 `curl https://pic.example.com/health` 确认公网可达
+  - 确认 `NAS_API_TOKEN` 两端一致
+- `⚠️ NAS 可达但清单为空` → 图片没迁到飞牛的 `eop-images` 文件夹（见第 7 步）
+- `✅ NAS 已生效` → 配置没问题，问题在浏览器缓存，看第 3 步
+
+**第 2 步：确认页面已改为动态渲染**
+新版代码里 `/` 和 `/gallery` 已加 `export const dynamic = 'force-dynamic'`。
+旧版是静态预渲染（构建时把 GitHub 旧图固化进页面），所以即使配了 NAS 也不变。
+**确保你部署的是最新代码**（GitHub 仓库已推送、EdgeOne 重新构建完成）。
+
+**第 3 步：清浏览器/CDN 缓存**
+- 浏览器强制刷新：`Ctrl + F5`
+- EdgeOne 控制台刷新 `/`、`/gallery`、`/api/random` 的缓存
+- 无痕窗口打开确认
+
+> 一句话总结：**先看 `/api/debug` 的 `conclusion`，它直接告诉你卡在哪一步。**
+
 ### Q9：3000 端口已被占用 / 容器起不来提示端口冲突？
 compose 里已经用 `3100:3000` 避开了 3000。
 - **左边是飞牛端口**：被占用就改左边，如 `3200:3000`
