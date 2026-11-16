@@ -78,21 +78,21 @@ export default function AdminPage() {
     return () => observer.disconnect();
   }, [isLoggedIn, visibleCount, images.length]);
 
-  const deleteImage = async (path: string, sha: string, name: string) => {
-    if (!confirm(`确定要删除图片 ${name} 吗？\n删除后 EdgeOne 将自动重新构建。`)) return;
+  const deleteImage = async (name: string) => {
+    if (!confirm(`确定要删除图片 ${name} 吗？\n删除后 NAS 上的文件将被移除。`)) return;
     setMessage(`正在删除 ${name}...`);
     try {
       const res = await fetch('/api/github', {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, sha, name }),
+        body: JSON.stringify({ name }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || '删除失败');
       }
-      setImages(prev => prev.filter(img => img.sha !== sha));
-      setMessage(`✅ ${name} 删除成功！等待 EdgeOne 构建生效。`);
+      setImages(prev => prev.filter(img => img.name !== name));
+      setMessage(`✅ ${name} 删除成功！`);
     } catch (err: any) {
       setMessage(`❌ 删除失败: ${err.message}`);
     }
@@ -146,7 +146,7 @@ export default function AdminPage() {
       })
     );
 
-    setMessage(`✅ 批量上传完成！成功 ${successCount}/${total} 张，已自动重命名。等待 EdgeOne 构建生效。`);
+    setMessage(`✅ 批量上传完成！成功 ${successCount}/${total} 张，已自动重命名。`);
     setUploading(false);
     handleLogin();
   };
@@ -273,12 +273,9 @@ export default function AdminPage() {
                   loading="lazy"
                   onError={(e) => {
                     const target = e.currentTarget;
-                    if (!target.src.includes('githubusercontent')) {
-                      target.src = `https://raw.githubusercontent.com/Smile-wa/EdgeOne-Random-Picture/main/public/images/${img.name}`;
-                    } else {
-                      target.style.opacity = '1';
-                      target.parentElement?.classList.remove('animate-pulse');
-                    }
+                    // 加载失败时隐藏骨架屏即可（图片已由 /api/github 返回 NAS 地址）
+                    target.style.opacity = '1';
+                    target.parentElement?.classList.remove('animate-pulse');
                   }}
                   onLoad={(e) => {
                     e.currentTarget.style.opacity = '1';
@@ -293,7 +290,7 @@ export default function AdminPage() {
               </div>
               <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
                 <button
-                  onClick={() => deleteImage(img.path, img.sha, img.name)}
+                  onClick={() => deleteImage(img.name)}
                   className="bg-red-500 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors shadow-lg"
                 >
                   删除

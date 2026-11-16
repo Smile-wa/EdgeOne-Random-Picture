@@ -7,6 +7,7 @@ import { useGSAP } from '@gsap/react';
 import GalleryItem from './GalleryItem';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useScrollLock } from '@/hooks/useScrollLock';
+import { getImageUrl } from '@/lib/image-url';
 import type { TypedImage, SortMode } from '@/types';
 
 const BATCH_SIZE = 40;
@@ -269,7 +270,7 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
               {lightboxImgError ? (
                 <div className="p-8 text-center text-sm opacity-50">图片加载失败，请稍后重试</div>
               ) : (
-                <img src={encodeURI(`/images/${selectedImage.src}`)} alt="" className="max-w-full max-h-[60vh] md:max-h-[90vh] object-contain" onError={() => setLightboxImgError(true)} />
+                <img src={getImageUrl(selectedImage.src)} alt="" className="max-w-full max-h-[60vh] md:max-h-[90vh] object-contain" onError={() => setLightboxImgError(true)} />
               )}
             </div>
             <div className="w-full md:w-[320px] p-8 flex flex-col gap-6 border-t md:border-t-0 md:border-l border-neutral-200 dark:border-white/10 overflow-y-auto">
@@ -282,9 +283,9 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
                   <label className="text-[10px] opacity-40 uppercase tracking-widest font-bold">资源地址</label>
                   <div className="flex flex-col gap-2">
                     <div className="bg-neutral-100 dark:bg-white/5 p-3 rounded-lg break-all font-mono text-[11px] opacity-90 border border-black/5 dark:border-white/5">
-                      {typeof window !== 'undefined' ? new URL(`/images/${selectedImage.src}`, window.location.href).href : `/images/${selectedImage.src}`}
+                      {typeof window !== 'undefined' ? new URL(getImageUrl(selectedImage.src), window.location.href).href : getImageUrl(selectedImage.src)}
                     </div>
-                    <button onClick={() => copyToClipboard(typeof window !== 'undefined' ? new URL(`/images/${selectedImage.src}`, window.location.href).href : `/images/${selectedImage.src}`)} className="w-full flex items-center justify-center gap-2 bg-neutral-100 dark:bg-white/10 hover:bg-neutral-200 dark:hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors">
+                    <button onClick={() => copyToClipboard(typeof window !== 'undefined' ? new URL(getImageUrl(selectedImage.src), window.location.href).href : getImageUrl(selectedImage.src))} className="w-full flex items-center justify-center gap-2 bg-neutral-100 dark:bg-white/10 hover:bg-neutral-200 dark:hover:bg-white/20 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors">
                       {copied ? '已复制' : '复制链接'}
                     </button>
                   </div>
@@ -301,7 +302,7 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
                 </div>
               </div>
               <div className="mt-auto pt-4">
-                <a href={encodeURI(`/images/${selectedImage.src}`)} download className="flex items-center justify-center gap-2 w-full bg-neutral-900 dark:bg-white text-white dark:text-black py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-colors no-underline">
+                <a href={getImageUrl(selectedImage.src)} download className="flex items-center justify-center gap-2 w-full bg-neutral-900 dark:bg-white text-white dark:text-black py-3 rounded-xl font-bold text-sm hover:opacity-90 transition-colors no-underline">
                   保存图片
                 </a>
               </div>

@@ -1,89 +1,44 @@
 // src/app/api/github/route.ts
+// 管理接口：保留原 /api/github 路径，内部改为转发到 NAS 图片服务。
+// 管理密码校验仍在 EdgeOne 侧完成，NAS 的 API Token 不会暴露给浏览器。
+
 import { NextResponse } from 'next/server';
+import { getImagesFromNas, nasUpload, nasDelete, isNasConfigured } from '@/lib/nas';
+import { getImageUrl } from '@/lib/image-url';
 
-const REPO_OWNER = 'Smile-wa';
-const REPO_NAME = 'EdgeOne-Random-Picture';
-const BRANCH = 'main';
-const IMAGE_DIR = 'public/images';
-
-// 🔥 本地开发默认密码，如果线上环境变量未配置，则使用这个
 const DEV_FALLBACK_PASSWORD = 'admin123';
 
 function isAuthorized(request: Request) {
   const authHeader = request.headers.get('Authorization');
-  // 优先读取线上配置的环境变量，没有则使用本地默认密码
   const password = process.env.ADMIN_PASSWORD || DEV_FALLBACK_PASSWORD;
   return authHeader === `Bearer ${password}`;
 }
 
-function getToken() {
-  return process.env.GITHUB_TOKEN || '';
+function notConfigured() {
+  return NextResponse.json(
+    { error: '服务器未配置 NAS_API_URL，请在 EdgeOne 环境变量中配置后使用' },
+    { status: 500 }
+  );
 }
 
-// 获取图片列表
+// 获取图片列表（管理后台用）
 export async function GET(request: Request) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: '未授权，密码错误' }, { status: 401 });
   }
-
-  const token = getToken();
-  if (!token) {
-    return NextResponse.json({ error: '服务器未配置 GITHUB_TOKEN' }, { status: 500 });
-  }
+  if (!isNasConfigured()) return notConfigured();
 
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${IMAGE_DIR}?ref=${BRANCH}`,
-      { 
-        headers: { Authorization: `token ${token}` },
-        next: { revalidate: 3600 } // 缓存 1 小时，提升加载速度
-      }
-    );
-    
-    if (!res.ok) throw new Error('获取文件列表失败');
-    const data = await res.json();
-    
-    const files = data
-      .filter((item: any) => item.type === 'file')
-      .map((item: any) => ({
-        name: item.name,
-        path: item.path,
-        sha: item.sha,
-        // 使用 CDN 代理并压缩图片，提升后台缩略图加载速度
-        download_url: `https://images.weserv.nl/?url=${encodeURIComponent(item.download_url.replace('https://', ''))}&w=400&output=webp&q=80`
-      }));
-
-    return NextResponse.json(files);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
-
-// 删除图片
-export async function DELETE(request: Request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ error: '未授权' }, { status: 401 });
-  }
-  
-  const token = getToken();
-  const { path, sha, name } = await request.json();
-  
-  try {
-    const res = await fetch(
-      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${path}`,
-      {
-        method: 'DELETE',
-        headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `delete: 删除图片 ${name} (通过 Admin 面板)`,
-          sha: sha,
-          branch: BRANCH,
-        }),
-      }
-    );
-    
-    if (!res.ok) throw new Error('删除失败');
-    return NextResponse.json({ success: true });
+    const meta = await getImagesFromNas();
+    const all = [...meta.pc, ...meta.mobile].map((img: any) => ({
+      name: img.src,
+      path: img.src,
+      sha: img.mtime + img.src, // 用 mtime+name 作为稳定 key（删除用 name 即可）
+      download_url: getImageUrl(img.src),
+      width: img.width,
+      height: img.height,
+    }));
+    return NextResponse.json(all);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
@@ -94,11 +49,7 @@ export async function PUT(request: Request) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: '未授权' }, { status: 401 });
   }
-
-  const token = getToken();
-  if (!token) {
-    return NextResponse.json({ error: '服务器未配置 GITHUB_TOKEN' }, { status: 500 });
-  }
+  if (!isNasConfigured()) return notConfigured();
 
   let name: string;
   let base64Content: string;
@@ -108,36 +59,45 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: '请求体格式错误' }, { status: 400 });
   }
 
-  // 校验：仅允许安全文件名，防止路径穿越
   if (
     typeof name !== 'string' ||
-    name.length === 0 ||
-    name.includes('/') ||
-    name.includes('\\') ||
+    !/^[\w.\-]+$/.test(name) ||
     name.includes('..') ||
-    !/^[\w.-]+$/.test(name) ||
     typeof base64Content !== 'string'
   ) {
     return NextResponse.json({ error: '文件名或内容不合法' }, { status: 400 });
   }
 
-  try {
-    const res = await fetch(
-      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${IMAGE_DIR}/${encodeURIComponent(name)}`,
-      {
-        method: 'PUT',
-        headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `upload: 上传图片 ${name} (通过 Admin 面板)`,
-          content: base64Content,
-          branch: BRANCH,
-        }),
-      }
+  const res = await nasUpload(name, base64Content);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    return NextResponse.json(
+      { error: data.error || '上传失败' },
+      { status: res.status }
     );
-
-    if (!res.ok) throw new Error('上传失败，可能已存在同名文件');
-    return NextResponse.json({ success: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
   }
+  return NextResponse.json({ success: true });
+}
+
+// 删除图片
+export async function DELETE(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: '未授权' }, { status: 401 });
+  }
+  if (!isNasConfigured()) return notConfigured();
+
+  const { name } = await request.json().catch(() => ({}));
+  if (typeof name !== 'string' || !/^[\w.\-]+$/.test(name) || name.includes('..')) {
+    return NextResponse.json({ error: '文件名不合法' }, { status: 400 });
+  }
+
+  const res = await nasDelete(name);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    return NextResponse.json(
+      { error: data.error || '删除失败' },
+      { status: res.status }
+    );
+  }
+  return NextResponse.json({ success: true });
 }

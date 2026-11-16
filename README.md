@@ -93,6 +93,64 @@ pnpm dev
 }
 ```
 
+## 把图片存储改为自己的 NAS
+
+站点仍然部署在 EdgeOne Pages（前端 + 全球 CDN），图片本体存放在你的 NAS。
+在 NAS 上用 Docker 运行本仓库自带的轻量图片服务，EdgeOne 通过服务端接口读写它。
+
+### 架构
+
+```text
+浏览器 ──访问──> EdgeOne Pages (本站)
+                    │ 服务端读取清单 / 代理管理操作
+                    ▼
+              NAS Docker 服务  ──静态图片──> 公网 HTTPS 域名 /images/xxx
+                    │
+                    ▼
+              NAS 共享目录（真实图片文件）
+```
+
+- 上传/删除：后台 → `/api/github` → NAS 服务（管理密码与 NAS 密钥都在服务端校验，不暴露给浏览器）
+- 图片访问：优先直连 `NEXT_PUBLIC_IMAGE_BASE_URL`；未配置则走 `/api/images` 同源代理
+- 新增图片**立即生效**，不再需要重新构建，清单有 60 秒缓存
+
+### 1. 在 NAS 上启动图片服务
+
+> 服务为零第三方依赖（图片尺寸用纯 JS 解析），无需 npm install / 构建 / Dockerfile。
+> 完整图形化教程（含飞牛 NAS）见 [DEPLOY-NAS.md](DEPLOY-NAS.md)。
+
+命令行方式：
+
+```bash
+cd nas-service
+cp .env.example .env      # 修改 NAS_API_TOKEN / PUBLIC_BASE_URL / IMAGE_DIR
+mkdir -p /volume1/docker/eop-images
+docker compose up -d      # 直接拉取 node:20-alpine 并挂载 server.js，无需 --build
+```
+
+用反代把映射端口（默认 `3100`）暴露为公网 HTTPS，例如 `https://pic.example.com`。
+`/images/*` 供浏览器直接访问，`/manifest` 等管理接口由 EdgeOne 服务端带密钥调用。
+Docker Hub 拉取超时时，配置国内镜像加速器或先手动拉取 `node:20-alpine`（详见 DEPLOY-NAS.md 第 4.3 步）。
+
+### 2. 配置 EdgeOne Pages 环境变量
+
+在 EdgeOne Pages 控制台添加（含义见仓库根目录 `.env.example`）：
+
+| 变量 | 示例 | 说明 |
+|------|------|------|
+| `NAS_API_URL` | `https://pic-api.example.com` | NAS 服务 API 地址，EdgeOne 需能访问 |
+| `NAS_API_TOKEN` | 与 NAS 端一致 | 服务端调用密钥 |
+| `NEXT_PUBLIC_IMAGE_BASE_URL` | `https://pic.example.com` | 图片公网域名，留空走 `/api/images` 代理 |
+| `ADMIN_PASSWORD` | 自定义 | 管理后台密码 |
+
+### 3. 使用
+
+重新部署后打开 `/admin` 上传图片即可，文件直接写入 NAS 共享目录。
+随机 API `/api/random`、图库 `/gallery` 会自动从 NAS 读取最新清单。
+
+> 提示：迁移完成后，原 `public/images` 里的旧图片需要手动复制到 NAS 的挂载目录。
+> 如果暂时不配置 NAS 环境变量，项目会自动回退到原来的本地 `images-metadata.json` 模式。
+
 ## 技术栈
 
 - **框架**：Next.js 16 (App Router, Turbopack)

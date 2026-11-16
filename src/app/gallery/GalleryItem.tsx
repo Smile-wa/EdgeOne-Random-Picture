@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
+import { getImageUrl } from '@/lib/image-url';
 import type { TypedImage } from '@/types';
 
 interface GalleryItemProps {
@@ -50,7 +51,7 @@ export default function GalleryItem({ img, idx, onClick }: GalleryItemProps) {
     >
       <img
         ref={imgRef}
-        src={encodeURI(`/images/${img.thumb || img.src}`)}
+        src={getImageUrl(img.src)}
         alt={altText}
         className={`w-full h-full object-cover block transition-all duration-700 group-hover:scale-105 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
         loading={idx < 20 ? "eager" : "lazy"}

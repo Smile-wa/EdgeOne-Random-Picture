@@ -1,0 +1,19 @@
+services:
+  nas-image-service:
+    # 零依赖镜像，不需要构建 / Dockerfile / npm install
+    image: node:20-alpine
+    container_name: eop-nas-images
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "/app/server.js"]
+    ports:
+      - "3100:3000"
+    environment:
+      - NAS_API_TOKEN=${NAS_API_TOKEN:?请在 .env 中设置 NAS_API_TOKEN}
+      - PORT=3000
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - DATA_DIR=/data/images
+      - MANIFEST_TTL_MS=${MANIFEST_TTL_MS:-30000}
+    volumes:
+      - ./server.js:/app/server.js:ro
+      - ${IMAGE_DIR:-/volume1/docker/eop-images}:/data/images

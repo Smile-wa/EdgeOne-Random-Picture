@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import ThemeToggle from '@/components/ThemeToggle';
 import { useScrollLock } from '@/hooks/useScrollLock';
+import { getImageUrl } from '@/lib/image-url';
 
 export default function HomeClient({ images }) {
   const [bgUrl, setBgUrl] = useState('');
@@ -19,7 +20,7 @@ export default function HomeClient({ images }) {
     const allImages = [...(images?.pc || []), ...(images?.mobile || [])];
     if (allImages.length > 0) {
       const randomImg = allImages[Math.floor(Math.random() * allImages.length)];
-      const url = `/images/${encodeURI(randomImg.src)}`;
+      const url = getImageUrl(randomImg.src);
 
       const img = new Image();
       img.src = url;

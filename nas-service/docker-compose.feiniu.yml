@@ -1,0 +1,49 @@
+# ============================================================
+# 飞牛 NAS（fnOS）Docker「项目」图形化部署专用 Compose 文件
+#
+# 特点：不需要构建、不需要 Dockerfile、不需要 npm install。
+#       直接拉取一个 node 镜像，把 server.js 挂进去运行即可。
+#
+# 用法：飞牛 Docker → 项目 → 新建项目 → 选本文件所在文件夹 → 改下面 3 个「请修改」值。
+# ============================================================
+
+services:
+  nas-image-service:
+    # 直接用一个轻量 Node 镜像（不再现场构建，所以不会报找不到 Dockerfile）
+    # 若拉取超时，在飞牛 Docker 设置里配置国内镜像加速器，或把本行改成已拉取到的镜像。
+    image: node:20-alpine
+
+    container_name: eop-nas-images
+    restart: unless-stopped
+    working_dir: /app
+
+    # command 直接运行挂载进来的脚本（server.js 从下面的 volumes 映射进来）
+    command: ["node", "/app/server.js"]
+
+    # 端口映射：左边 = 飞牛端口，右边 = 容器内端口（固定 3000，不要动）
+    # 已使用 3100 避开常被占用的 3000；若 3100 也占用，改左边数字即可，如 "3200:3000"
+    # 改了左边后，反代目标端口也要同步改（见教程第 5 步）
+    ports:
+      - "3100:3000"
+
+    environment:
+      # 请修改 ① ：改成教程第 2 步生成的随机密钥（与 EdgeOne 端一致）
+      - NAS_API_TOKEN=请修改-随机密钥
+
+      - PORT=3000
+
+      # 请修改 ② ：图片对外访问的公网 HTTPS 域名（不带结尾斜杠）
+      - PUBLIC_BASE_URL=https://pic.example.com
+
+      - DATA_DIR=/data/images
+      - MANIFEST_TTL_MS=30000
+
+    volumes:
+      # 请修改 ③a ：冒号左边 = server.js 在飞牛上的真实路径（就是本 compose 所在文件夹里的 server.js）
+      # 下面示例表示 compose 和 server.js 在同一文件夹，一般不用改
+      - ./server.js:/app/server.js:ro
+
+      # 请修改 ③b ：冒号左边 = 飞牛上真正存图片的文件夹路径
+      # 建议在飞牛文件管理器里选中该文件夹 → 复制路径 获取真实路径
+      # 示例：
+      - /vol1/1000/docker/eop-images:/data/images

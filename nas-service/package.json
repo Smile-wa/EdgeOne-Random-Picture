@@ -1,0 +1,10 @@
+{
+  "name": "edgeone-random-picture-nas",
+  "version": "2.0.0",
+  "private": true,
+  "description": "NAS 图片存储服务（零第三方依赖，node server.js 直接运行）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

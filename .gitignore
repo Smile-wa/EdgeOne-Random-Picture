@@ -12,6 +12,9 @@ Thumbs.db
 # Environment
 .env*
 .local
+# 保留配置示例文件
+!.env.example
+!nas-service/.env.example
 
 # Debug
 npm-debug.log*

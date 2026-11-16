@@ -1,4 +1,5 @@
 import { getImages } from '@/lib/images';
+import { getImageUrl } from '@/lib/image-url';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import type { ImageMeta } from '@/types';
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const typeParam = searchParams.get('type');
     const excludeParam = searchParams.get('exclude');
-    const { pc, mobile } = getImages();
+    const { pc, mobile } = await getImages();
 
     let list: ImageMeta[];
 
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
     }
 
     const randomImage = list[Math.floor(Math.random() * list.length)];
-    const imageUrl = `/images/${encodeURI(randomImage.src)}`;
+    const imageUrl = getImageUrl(randomImage.src);
 
     // JSON 模式
     if (searchParams.get('redirect') === 'false') {
