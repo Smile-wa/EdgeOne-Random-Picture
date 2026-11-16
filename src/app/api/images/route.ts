@@ -10,7 +10,8 @@ const NAS_API_URL = (process.env.NAS_API_URL || '').replace(/\/$/, '');
 
 export async function GET(request: NextRequest) {
   const name = request.nextUrl.searchParams.get('name') || '';
-  if (!name || !/^[\w.\-]+$/.test(name) || name.includes('..')) {
+  // 只防路径穿越，允许空格/括号/中文等旧文件名
+  if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
     return NextResponse.json({ error: '非法文件名' }, { status: 400 });
   }
   if (!NAS_API_URL) {

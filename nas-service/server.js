@@ -96,6 +96,8 @@ function isAuthorized(req) {
 }
 
 function safeName(name) {
+  // 只防路径穿越，不限制空格/括号/中文等字符，
+  // 这样从 GitHub 迁过来的旧文件名（如 "1 (8).jpeg"）也能正常提供。
   return (
     typeof name === 'string' &&
     name.length > 0 &&
@@ -103,7 +105,7 @@ function safeName(name) {
     !name.includes('/') &&
     !name.includes('\\') &&
     !name.includes('..') &&
-    /^[\w.\-]+$/.test(name)
+    !/[\x00-\x1f\x7f]/.test(name)
   );
 }
 

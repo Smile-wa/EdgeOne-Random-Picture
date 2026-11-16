@@ -407,6 +407,23 @@ Docker Hub 国内直连超时。按第 4.3 步的方法处理：配置镜像加�
 ### Q8：想换回 GitHub 存储？
 留空/删除 `NAS_API_URL` 等变量重新部署，项目自动回退到本地 `images-metadata.json` 模式（或用 git 历史恢复旧版 `/api/github`）。
 
+### 🔥 Q8-2：部署成功，但页面图片加载不出来（全是空白/裂图）？
+先访问 `https://你的站点/api/debug`，重点看两个字段：
+
+- **`rawManifest.firstFewSrc`**：清单里的文件名长什么样。若是 `1 (8).jpeg` 这种带空格/括号的旧文件名——**已修复**：新版 NAS 服务已放宽文件名校验，支持空格/括号/中文。确保飞牛容器用的是最新 `server.js`（重新上传 `server.js` 并重启项目）。
+- **`imageProbe`**：
+  - `status: 200` 且 `contentType: image/...` → NAS 图片源正常，问题在前端访问：
+    - 若 `frontendUrl` 是 `https://pic.example.com/images/xxx`：浏览器直接访问这个地址看能否打开；打不开就是反代/证书/防火墙问题（确认是有效 HTTPS）
+    - 若 `frontendUrl` 是 `/api/images?name=xxx`：确认 EdgeOne 的 `NAS_API_URL` 已配且能访问；同源代理模式下 `NEXT_PUBLIC_IMAGE_BASE_URL` 留空是正常的
+  - `status: 4xx/5xx` → 看 `nasStaticUrl`，在浏览器直接打开它：
+    - 404：图片没真正上传到飞牛 `eop-images` 文件夹
+    - 401：token 不对（但静态图片不需要 token，一般不会出现）
+    - 连接失败：反代没配好 / 证书无效 / 端口不对（检查是否用了 `3100`）
+
+**最快验证法**：把 `rawManifest.firstFewSrc` 里第一个文件名拼到 `https://pic.example.com/images/` 后面，浏览器直接打开。能打开图 → 问题在站点配置；打不开 → 问题在飞牛服务/反代。
+
+> 若清单里有图片但都是 `1 (xx).jpeg` 这种，建议后续统一用管理后台重新上传（会自动重命名为无空格唯一名），最省心。
+
 ### 🔥 Q8-1：部署完成，但图片还是 GitHub 上的旧图 / 没变？
 这是最常见的问题，**代码已全部切到 NAS，根因一定是配置或缓存**。按顺序排查：
 

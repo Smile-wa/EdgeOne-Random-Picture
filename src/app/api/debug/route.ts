@@ -1,52 +1,86 @@
 // src/app/api/debug/route.ts
-// 临时诊断接口：查看 NAS 环境变量是否生效、清单来源是否正确。
+// 诊断接口：查看 NAS 配置、清单来源，并实测图片能否加载。
 // 排查完可删除本文件。
 
 import { NextResponse } from 'next/server';
+import { getImageUrl } from '@/lib/image-url';
+import { getImagesFromNas } from '@/lib/nas';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   const NAS_API_URL = process.env.NAS_API_URL || '';
   const NAS_API_TOKEN = process.env.NAS_API_TOKEN || '';
-  const NEXT_PUBLIC_IMAGE_BASE_URL = process.env.NEXT_PUBLIC_IMAGE_BASE_URL || '';
+  const IMAGE_BASE = process.env.NEXT_PUBLIC_IMAGE_BASE_URL || '';
 
-  let manifestStatus = 'not attempted';
-  let manifestSample: any = null;
-  let manifestError: string | null = null;
+  const result: any = {
+    configured: {
+      NAS_API_URL: NAS_API_URL || '(未设置)',
+      NAS_API_TOKEN: NAS_API_TOKEN ? `已设置(${NAS_API_TOKEN.length}位)` : '(未设置)',
+      NEXT_PUBLIC_IMAGE_BASE_URL: IMAGE_BASE || '(未设置 → 走同源 /api/images 代理)',
+    },
+  };
 
+  // 1) 直接测 NAS manifest 原始返回
   if (NAS_API_URL) {
     try {
       const res = await fetch(`${NAS_API_URL.replace(/\/$/, '')}/manifest`, {
         headers: { 'X-Api-Token': NAS_API_TOKEN },
         cache: 'no-store',
       });
-      manifestStatus = `HTTP ${res.status}`;
       const data = await res.json();
-      manifestSample = {
+      result.rawManifest = {
+        status: `HTTP ${res.status}`,
         pcCount: data.pc?.length ?? 0,
         mobileCount: data.mobile?.length ?? 0,
-        baseUrl: data.baseUrl ?? null,
-        first: data.pc?.[0] ?? data.mobile?.[0] ?? null,
+        firstFewSrc: [...(data.pc || []), ...(data.mobile || [])].slice(0, 3).map((x: any) => x.src),
       };
     } catch (e: any) {
-      manifestError = e.message;
+      result.rawManifest = { error: e.message };
     }
+  } else {
+    result.rawManifest = { error: 'NAS_API_URL 未配置' };
   }
 
-  return NextResponse.json({
-    configured: {
-      NAS_API_URL: NAS_API_URL || '(未设置)',
-      NAS_API_TOKEN: NAS_API_TOKEN ? `已设置(${NAS_API_TOKEN.length}位)` : '(未设置)',
-      NEXT_PUBLIC_IMAGE_BASE_URL: NEXT_PUBLIC_IMAGE_BASE_URL || '(未设置 → 走同源 /api/images 代理)',
-    },
-    manifest: { status: manifestStatus, sample: manifestSample, error: manifestError },
-    conclusion: !NAS_API_URL
-      ? '❌ NAS_API_URL 未配置 → 当前走本地/GitHub 旧数据'
-      : manifestError
-      ? '❌ 无法访问 NAS → 清单回退到本地旧数据'
-      : manifestSample && (manifestSample.pcCount + manifestSample.mobileCount) > 0
-      ? '✅ NAS 已生效'
-      : '⚠️ NAS 可达但清单为空 → 检查图片是否已迁移到 NAS 目录',
-  });
+  // 2) 走项目逻辑拿清单，并实测第一张图能否加载
+  try {
+    const meta = await getImagesFromNas();
+    const all = [...meta.pc, ...meta.mobile];
+    result.appManifest = {
+      count: all.length,
+      firstSrc: all[0]?.src ?? null,
+      firstUrl: all[0] ? getImageUrl(all[0].src) : null,
+    };
+
+    if (all[0] && NAS_API_URL) {
+      const url = getImageUrl(all[0].src);
+      // 直接测 NAS 静态图片地址（NAS 服务 /images/<name>），这是图片加载的源头
+      try {
+        const staticUrl = `${NAS_API_URL.replace(/\/$/, '')}/images/${encodeURIComponent(all[0].src)}`;
+        const imgRes = await fetch(staticUrl, { redirect: 'manual' });
+        result.imageProbe = {
+          frontendUrl: url,
+          nasStaticUrl: staticUrl,
+          status: imgRes.status,
+          contentType: imgRes.headers.get('content-type'),
+        };
+      } catch (e: any) {
+        result.imageProbe = { frontendUrl: url, error: e.message };
+      }
+    }
+  } catch (e: any) {
+    result.appManifest = { error: e.message };
+  }
+
+  result.conclusion = !NAS_API_URL
+    ? '❌ NAS_API_URL 未配置 → 走本地旧数据'
+    : result.rawManifest?.error
+    ? '❌ 无法访问 NAS manifest'
+    : (result.rawManifest?.pcCount ?? 0) + (result.rawManifest?.mobileCount ?? 0) === 0
+    ? '⚠️ NAS 可达但清单为空 → 图片没迁移到 NAS 目录'
+    : result.imageProbe?.status && result.imageProbe.status >= 200 && result.imageProbe.status < 400
+    ? '✅ 配置正常，图片可访问（若页面仍不显示，多为浏览器缓存或跨域问题）'
+    : '⚠️ 清单正常但图片访问异常 → 看 imageProbe 详情';
+
+  return NextResponse.json(result);
 }
