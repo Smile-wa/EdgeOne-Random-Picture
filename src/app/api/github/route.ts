@@ -3,7 +3,7 @@
 // 管理密码校验仍在 EdgeOne 侧完成，NAS 的 API Token 不会暴露给浏览器。
 
 import { NextResponse } from 'next/server';
-import { getImagesFromNas, nasUpload, nasDelete, isNasConfigured } from '@/lib/nas';
+import { getImagesFromNas, nasUpload, nasDelete, nasDeleteBatch, nasRename, nasOrganize, isNasConfigured } from '@/lib/nas';
 import { getImageUrl } from '@/lib/image-url';
 
 const DEV_FALLBACK_PASSWORD = 'admin123';
@@ -18,6 +18,19 @@ function notConfigured() {
   return NextResponse.json(
     { error: '服务器未配置 NAS_API_URL，请在 EdgeOne 环境变量中配置后使用' },
     { status: 500 }
+  );
+}
+
+// 仅防路径穿越，允许空格/括号/中文等从 GitHub 迁来的旧文件名
+function isValidName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= 255 &&
+    !name.includes('/') &&
+    !name.includes('\\') &&
+    !name.includes('..') &&
+    !/[\x00-\x1f\x7f]/.test(name)
   );
 }
 
@@ -59,12 +72,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: '请求体格式错误' }, { status: 400 });
   }
 
-  if (
-    typeof name !== 'string' ||
-    !/^[\w.\-]+$/.test(name) ||
-    name.includes('..') ||
-    typeof base64Content !== 'string'
-  ) {
+  if (!isValidName(name) || typeof base64Content !== 'string') {
     return NextResponse.json({ error: '文件名或内容不合法' }, { status: 400 });
   }
 
@@ -87,7 +95,7 @@ export async function DELETE(request: Request) {
   if (!isNasConfigured()) return notConfigured();
 
   const { name } = await request.json().catch(() => ({}));
-  if (typeof name !== 'string' || !/^[\w.\-]+$/.test(name) || name.includes('..')) {
+  if (!isValidName(name)) {
     return NextResponse.json({ error: '文件名不合法' }, { status: 400 });
   }
 
@@ -100,4 +108,40 @@ export async function DELETE(request: Request) {
     );
   }
   return NextResponse.json({ success: true });
+}
+
+// 批量操作 / 重命名 / 整理：POST /api/github  { action, ... }
+export async function POST(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: '未授权' }, { status: 401 });
+  }
+  if (!isNasConfigured()) return notConfigured();
+
+  const body = await request.json().catch(() => ({}));
+  const { action } = body;
+
+  let res: Response;
+  if (action === 'deleteBatch') {
+    const names = Array.isArray(body.names) ? body.names : [];
+    if (!names.length || !names.every(isValidName)) {
+      return NextResponse.json({ error: '文件名列表不合法' }, { status: 400 });
+    }
+    res = await nasDeleteBatch(names);
+  } else if (action === 'rename') {
+    const { from, to } = body;
+    if (!isValidName(from) || (to !== undefined && !isValidName(to))) {
+      return NextResponse.json({ error: '文件名不合法' }, { status: 400 });
+    }
+    res = await nasRename(from, to);
+  } else if (action === 'organize') {
+    res = await nasOrganize();
+  } else {
+    return NextResponse.json({ error: '未知操作' }, { status: 400 });
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return NextResponse.json({ error: data.error || '操作失败' }, { status: res.status });
+  }
+  return NextResponse.json(data);
 }

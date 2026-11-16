@@ -20,6 +20,15 @@ const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.t
 const SKIP_FILES = new Set(['index.html', 'notfound.jpg', '.DS_Store']);
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
+// 生成唯一安全文件名：<毫秒时间戳36进制>-<3位随机>.<扩展名>
+function uniqueName(originalName) {
+  const m = /\.([a-z0-9]{1,8})$/i.exec(originalName || '');
+  const ext = m ? '.' + m[1].toLowerCase() : '.jpg';
+  const time = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 5).padEnd(3, '0');
+  return `${time}-${rand}${ext}`;
+}
+
 // ---------- 纯 JS 图片尺寸解析（无依赖） ----------
 function getImageSize(buf) {
   if (!buf || buf.length < 16) return null;
@@ -180,7 +189,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET,PUT,DELETE,OPTIONS',
+        'Access-Control-Allow-Methods': 'GET,PUT,POST,DELETE,OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-Api-Token',
         'Access-Control-Max-Age': '86400',
       });
@@ -256,6 +265,70 @@ const server = http.createServer(async (req, res) => {
       }
       manifestCacheAt = 0;
       return send(res, 200, { success: true });
+    }
+
+    // 批量删除：POST /delete-batch  { names: string[] }
+    if (pathname === '/delete-batch' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req, 8 * 1024 * 1024));
+      const names = Array.isArray(body.names) ? body.names : [];
+      let deleted = 0;
+      const failed = [];
+      for (const name of names) {
+        if (!safeName(name)) { failed.push({ name, reason: '非法文件名' }); continue; }
+        try {
+          await fsp.unlink(path.join(DATA_DIR, name));
+          deleted++;
+        } catch (e) {
+          failed.push({ name, reason: e.code === 'ENOENT' ? '不存在' : e.message });
+        }
+      }
+      if (deleted > 0) manifestCacheAt = 0;
+      return send(res, 200, { success: true, deleted, total: names.length, failed });
+    }
+
+    // 单文件重命名：POST /rename  { from, to }  （to 省略则自动生成安全唯一名）
+    if (pathname === '/rename' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req, 1024 * 8));
+      const { from, to } = body;
+      if (!safeName(from)) return send(res, 400, { error: '原文件名不合法' });
+      const src = path.join(DATA_DIR, from);
+      let stat;
+      try { stat = await fsp.stat(src); } catch { return send(res, 404, { error: '文件不存在' }); }
+      // 目标名：显式指定或自动生成；统一补上正确的原扩展名
+      const ext = path.extname(from) || '.jpg';
+      let target = (typeof to === 'string' && to) ? to : uniqueName(from);
+      if (!path.extname(target)) target += ext;
+      if (!safeName(target)) return send(res, 400, { error: '目标文件名不合法' });
+      if (target === from) return send(res, 200, { success: true, from, to: target, unchanged: true });
+      const dst = path.join(DATA_DIR, target);
+      try { await fsp.stat(dst); return send(res, 400, { error: '目标文件名已存在' }); } catch {}
+      await fsp.rename(src, dst);
+      manifestCacheAt = 0;
+      return send(res, 200, { success: true, from, to: target });
+    }
+
+    // 一键整理：POST /organize  — 把所有「不安全」文件名（空格/括号/中文等）自动重命名为安全唯一名
+    if (pathname === '/organize' && req.method === 'POST') {
+      const entries = await fsp.readdir(DATA_DIR, { withFileTypes: true });
+      const renamed = [];
+      const failed = [];
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!IMAGE_EXT.has(ext) || SKIP_FILES.has(entry.name)) continue;
+        // 只整理「含空格/括号/非ASCII等」的不安全文件名；
+        // 已经是纯 ASCII 且无空格括号的名字（含本工具生成的名字）保持不动。
+        if (/^[\w.\-]+$/.test(entry.name)) continue;
+        const target = uniqueName(entry.name);
+        try {
+          await fsp.rename(path.join(DATA_DIR, entry.name), path.join(DATA_DIR, target));
+          renamed.push({ from: entry.name, to: target });
+        } catch (e) {
+          failed.push({ from: entry.name, reason: e.message });
+        }
+      }
+      if (renamed.length) manifestCacheAt = 0;
+      return send(res, 200, { success: true, renamedCount: renamed.length, renamed, failed });
     }
 
     return send(res, 404, { error: 'Not Found' });

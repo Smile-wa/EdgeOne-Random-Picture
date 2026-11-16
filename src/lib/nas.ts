@@ -69,3 +69,33 @@ export async function nasDelete(name: string) {
   });
   return res;
 }
+
+/** 批量删除 */
+export async function nasDeleteBatch(names: string[]) {
+  const res = await fetch(`${NAS_API_URL}/delete-batch`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ names }),
+  });
+  return res;
+}
+
+/** 重命名（to 省略则自动生成安全唯一名） */
+export async function nasRename(from: string, to?: string) {
+  const res = await fetch(`${NAS_API_URL}/rename`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ from, to }),
+  });
+  return res;
+}
+
+/** 一键整理所有不安全文件名为安全唯一名 */
+export async function nasOrganize() {
+  const res = await fetch(`${NAS_API_URL}/organize`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: '{}',
+  });
+  return res;
+}

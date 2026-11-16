@@ -23,6 +23,8 @@ export default function AdminPage() {
   const loaderRef = useRef<HTMLDivElement>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
 
   // 监听滚动，控制回到顶部按钮
   useEffect(() => {
@@ -92,10 +94,91 @@ export default function AdminPage() {
         throw new Error(data.error || '删除失败');
       }
       setImages(prev => prev.filter(img => img.name !== name));
+      setSelected(prev => { const n = new Set(prev); n.delete(name); return n; });
       setMessage(`✅ ${name} 删除成功！`);
     } catch (err: any) {
       setMessage(`❌ 删除失败: ${err.message}`);
     }
+  };
+
+  // 批量删除选中图片
+  const deleteSelected = async () => {
+    const names = Array.from(selected);
+    if (names.length === 0) return;
+    if (!confirm(`确定要删除选中的 ${names.length} 张图片吗？\n删除后 NAS 上的文件将被移除。`)) return;
+    setBusy(true);
+    setMessage(`正在删除 ${names.length} 张图片...`);
+    try {
+      const res = await fetch('/api/github', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deleteBatch', names }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '批量删除失败');
+      const nameSet = new Set(names);
+      setImages(prev => prev.filter(img => !nameSet.has(img.name)));
+      setSelected(new Set());
+      setMessage(`✅ 批量删除完成！成功 ${data.deleted}/${data.total} 张${data.failed?.length ? `，失败 ${data.failed.length} 张` : ''}。`);
+    } catch (err: any) {
+      setMessage(`❌ 批量删除失败: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 一键整理：把NAS上所有不安全文件名（空格/括号/中文等）重命名为安全唯一名
+  const organizeFiles = async () => {
+    if (!confirm('确定要一键整理吗？\n将把 NAS 上所有带空格/括号/中文的旧文件名，自动重命名为「时间戳-随机码」安全文件名。\n图片内容不变，但旧链接会失效。')) return;
+    setBusy(true);
+    setMessage('正在整理文件名...');
+    try {
+      const res = await fetch('/api/github', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'organize' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '整理失败');
+      setSelected(new Set());
+      setMessage(`✅ 整理完成！重命名 ${data.renamedCount} 张${data.failed?.length ? `，失败 ${data.failed.length} 张` : ''}。正在刷新列表...`);
+      handleLogin();
+    } catch (err: any) {
+      setMessage(`❌ 整理失败: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 单张重命名
+  const renameFile = async (oldName: string) => {
+    const newName = prompt(`重命名图片\n旧文件名：${oldName}\n请输入新文件名（留空则自动生成安全名）：`, '');
+    if (newName === null) return;
+    setBusy(true);
+    setMessage(`正在重命名 ${oldName}...`);
+    try {
+      const res = await fetch('/api/github', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rename', from: oldName, to: newName || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '重命名失败');
+      setMessage(`✅ 重命名成功：${oldName} → ${data.to}`);
+      handleLogin();
+    } catch (err: any) {
+      setMessage(`❌ 重命名失败: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleSelect = (name: string) => {
+    setSelected(prev => {
+      const n = new Set(prev);
+      if (n.has(name)) n.delete(name); else n.add(name);
+      return n;
+    });
   };
 
   // 🔥 并发多选上传 + 自动重命名（时间戳 + 短随机，极速且无重名）
@@ -243,16 +326,41 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-black p-4 md:p-8 relative pb-24">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-8 gap-4">
+        <div className="flex items-center justify-between mb-4 gap-4">
           <div>
             <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">图库管理后台</h1>
             <p className="text-sm text-neutral-500">共 {images.length} 张图片 · 点击右下角上传，也可拖拽 / 粘贴截图，多选自动批量重命名</p>
           </div>
-          <div>
+          <div className="flex gap-2">
+            <button
+              onClick={organizeFiles}
+              disabled={busy}
+              className="px-3 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
+            >
+              🧹 一键整理命名
+            </button>
             <Link href="/gallery" className="px-4 py-2 bg-neutral-200 dark:bg-white/10 rounded-lg text-sm font-medium hover:bg-neutral-300 dark:hover:bg-white/20 transition-colors">
               返回图库
             </Link>
           </div>
+        </div>
+
+        {/* 批量操作工具栏 */}
+        <div className="mb-4 flex items-center gap-3 p-3 bg-white dark:bg-[#1a1a1a] rounded-lg border border-neutral-200 dark:border-white/10 text-sm">
+          <button
+            onClick={() => setSelected(selected.size === images.length ? new Set() : new Set(images.map(i => i.name)))}
+            className="px-3 py-1.5 rounded border border-neutral-300 dark:border-white/20 hover:bg-neutral-100 dark:hover:bg-white/5 transition-colors"
+          >
+            {selected.size === images.length && images.length > 0 ? '取消全选' : '全选'}
+          </button>
+          <span className="text-neutral-500">已选 <b className="text-neutral-900 dark:text-white">{selected.size}</b> 张</span>
+          <button
+            onClick={deleteSelected}
+            disabled={selected.size === 0 || busy}
+            className="ml-auto px-4 py-1.5 bg-red-500 text-white rounded font-bold hover:bg-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            🗑 批量删除{selected.size > 0 ? ` (${selected.size})` : ''}
+          </button>
         </div>
 
         {message && (
@@ -264,7 +372,16 @@ export default function AdminPage() {
         {/* 瀑布流布局 (横屏保持横屏，竖屏保持竖屏) */}
         <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-4">
           {images.slice(0, visibleCount).map((img) => (
-            <div key={img.sha} className="break-inside-avoid mb-4 group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border border-neutral-200 dark:border-white/10">
+            <div key={img.sha} className={`break-inside-avoid mb-4 group relative bg-white dark:bg-[#1a1a1a] rounded-xl overflow-hidden shadow-sm border-2 transition-colors ${selected.has(img.name) ? 'border-blue-500' : 'border-neutral-200 dark:border-white/10'}`}>
+              {/* 选择复选框 */}
+              <label className="absolute top-2 left-2 z-30 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(img.name)}
+                  onChange={() => toggleSelect(img.name)}
+                  className="w-5 h-5 accent-blue-600 cursor-pointer"
+                />
+              </label>
               <div className="relative bg-neutral-200 dark:bg-neutral-800 min-h-[100px] animate-pulse">
                 <img
                   src={img.download_url}
@@ -288,10 +405,16 @@ export default function AdminPage() {
                   {img.name}
                 </p>
               </div>
-              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20">
+              <div className="absolute inset-x-0 bottom-0 bg-black/60 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 z-20 py-2 sm:py-0 sm:inset-0">
+                <button
+                  onClick={() => renameFile(img.name)}
+                  className="bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-blue-600 transition-colors shadow-lg"
+                >
+                  重命名
+                </button>
                 <button
                   onClick={() => deleteImage(img.name)}
-                  className="bg-red-500 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors shadow-lg"
+                  className="bg-red-500 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-red-600 transition-colors shadow-lg"
                 >
                   删除
                 </button>
