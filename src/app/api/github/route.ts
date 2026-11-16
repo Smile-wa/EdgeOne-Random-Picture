@@ -94,13 +94,36 @@ export async function PUT(request: Request) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: '未授权' }, { status: 401 });
   }
-  
+
   const token = getToken();
-  const { name, base64Content } = await request.json();
-  
+  if (!token) {
+    return NextResponse.json({ error: '服务器未配置 GITHUB_TOKEN' }, { status: 500 });
+  }
+
+  let name: string;
+  let base64Content: string;
+  try {
+    ({ name, base64Content } = await request.json());
+  } catch {
+    return NextResponse.json({ error: '请求体格式错误' }, { status: 400 });
+  }
+
+  // 校验：仅允许安全文件名，防止路径穿越
+  if (
+    typeof name !== 'string' ||
+    name.length === 0 ||
+    name.includes('/') ||
+    name.includes('\\') ||
+    name.includes('..') ||
+    !/^[\w.-]+$/.test(name) ||
+    typeof base64Content !== 'string'
+  ) {
+    return NextResponse.json({ error: '文件名或内容不合法' }, { status: 400 });
+  }
+
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${IMAGE_DIR}/${name}`,
+      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${IMAGE_DIR}/${encodeURIComponent(name)}`,
       {
         method: 'PUT',
         headers: { Authorization: `token ${token}`, 'Content-Type': 'application/json' },
@@ -111,7 +134,7 @@ export async function PUT(request: Request) {
         }),
       }
     );
-    
+
     if (!res.ok) throw new Error('上传失败，可能已存在同名文件');
     return NextResponse.json({ success: true });
   } catch (error: any) {

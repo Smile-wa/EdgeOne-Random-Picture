@@ -3,6 +3,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { generateUniqueImageName } from '@/lib/upload';
+
+// 从文件列表里过滤出图片文件
+function pickImageFiles(fileList: FileList | null): File[] {
+  if (!fileList) return [];
+  return Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+}
 
 export default function AdminPage() {
   const [password, setPassword] = useState('');
@@ -15,6 +22,7 @@ export default function AdminPage() {
   const [visibleCount, setVisibleCount] = useState(30);
   const loaderRef = useRef<HTMLDivElement>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // 监听滚动，控制回到顶部按钮
   useEffect(() => {
@@ -90,22 +98,26 @@ export default function AdminPage() {
     }
   };
 
-  // 🔥 并发多选上传逻辑（速度快）
-  const uploadImages = async (files: FileList) => {
+  // 🔥 并发多选上传 + 自动重命名（时间戳 + 短随机，极速且无重名）
+  const uploadImages = async (files: FileList | File[]) => {
     if (!password) return;
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
     setUploading(true);
-    const total = files.length;
+    const total = fileArray.length;
+    let done = 0;
     let successCount = 0;
 
-    setMessage(`正在并发上传 ${total} 张图片...`);
+    setMessage(`正在上传 0/${total} 张...`);
 
-    const fileArray = Array.from(files);
-
-    // 使用 Promise.all 并发处理多个文件的上传
+    // 并发上传；每张完成后更新进度
     await Promise.all(
       fileArray.map(async (file) => {
         try {
-          // 将文件转为 Base64
+          // 重新命名为「时间戳+短随机.扩展名」，避免空格/括号/中文导致的编码与重名问题
+          const name = generateUniqueImageName(file.name);
+
           const base64Content = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.readAsDataURL(file);
@@ -116,25 +128,87 @@ export default function AdminPage() {
           const res = await fetch('/api/github', {
             method: 'PUT',
             headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: file.name, base64Content }),
+            body: JSON.stringify({ name, base64Content }),
           });
 
           if (res.ok) {
             successCount++;
           } else {
             const data = await res.json();
-            console.error(`${file.name} 上传失败:`, data.error);
+            console.error(`${file.name} → ${name} 上传失败:`, data.error);
           }
         } catch (err) {
           console.error(`${file.name} 上传异常:`, err);
+        } finally {
+          done++;
+          if (done < total) setMessage(`正在上传 ${done}/${total} 张...`);
         }
       })
     );
 
-    setMessage(`✅ 批量上传完成！成功 ${successCount}/${total} 张。等待 EdgeOne 构建生效。`);
-    handleLogin(); 
+    setMessage(`✅ 批量上传完成！成功 ${successCount}/${total} 张，已自动重命名。等待 EdgeOne 构建生效。`);
     setUploading(false);
+    handleLogin();
   };
+
+  // 📋 电脑端粘贴截图直接上传（对手机无影响）
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const files = pickImageFiles(e.clipboardData?.files ?? null);
+      if (files.length > 0 && !uploading) {
+        e.preventDefault();
+        uploadImages(files);
+      }
+    };
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [isLoggedIn, uploading, password]);
+
+  // 🖱️ 电脑端拖拽图片到页面上传（对手机无影响）
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let dragDepth = 0;
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes('Files');
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth++;
+      setIsDragging(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setIsDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      setIsDragging(false);
+      if (uploading) return;
+      const files = pickImageFiles(e.dataTransfer?.files ?? null);
+      if (files.length > 0) uploadImages(files);
+    };
+
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, [isLoggedIn, uploading, password]);
 
   if (!isLoggedIn) {
     return (
@@ -172,7 +246,7 @@ export default function AdminPage() {
         <div className="flex items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">图库管理后台</h1>
-            <p className="text-sm text-neutral-500">共 {images.length} 张图片</p>
+            <p className="text-sm text-neutral-500">共 {images.length} 张图片 · 点击右下角上传，也可拖拽 / 粘贴截图，多选自动批量重命名</p>
           </div>
           <div>
             <Link href="/gallery" className="px-4 py-2 bg-neutral-200 dark:bg-white/10 rounded-lg text-sm font-medium hover:bg-neutral-300 dark:hover:bg-white/20 transition-colors">
@@ -236,14 +310,26 @@ export default function AdminPage() {
         )}
       </div>
 
+      {/* 拖拽上传提示遮罩 */}
+      {isDragging && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none">
+          <div className="border-4 border-dashed border-white/80 rounded-3xl px-12 py-16 text-white text-2xl font-bold flex flex-col items-center gap-4">
+            <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            松开即可上传图片
+          </div>
+        </div>
+      )}
+
       {/* 悬浮多选上传按钮 */}
       <div className="fixed bottom-24 right-6 z-[9999]">
         <label className="flex items-center justify-center w-14 h-14 bg-blue-600 text-white rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] cursor-pointer hover:bg-blue-700 transition-all hover:scale-110">
           <input
             type="file"
-            // 🔥 增加更精确的 accept 格式，兼容部分手机的多选逻辑
-            accept="image/*,image/jpeg,image/png,image/webp,image/gif"
-            multiple // 🔥 开启多选
+            // 手机/电脑通用的图片类型，capture 不设置以保留相册多选能力
+            accept="image/*"
+            multiple // 开启多选
             className="hidden"
             disabled={uploading}
             onChange={(e) => {
