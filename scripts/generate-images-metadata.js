@@ -109,8 +109,17 @@ async function generateMetadata() {
   const thumbDir = path.join(rootDir, '.thumbnails');
 
   if (!fs.existsSync(rootDir)) {
-    console.error('❌ public/images directory not found');
-    process.exit(1);
+    // 图片已迁移到 NAS 时，本地 public/images 可能不存在。
+    // 此时生成空清单并正常退出，避免阻断构建（NAS 模式下清单由运行时从 NAS 获取）。
+    console.log('ℹ️ public/images 目录不存在，生成空清单（NAS 模式下将使用运行时 NAS 清单）');
+    const outputPath = path.join(process.cwd(), 'src', 'lib', 'images-metadata.json');
+    await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+    await fsp.writeFile(
+      outputPath,
+      JSON.stringify({ pc: [], mobile: [], updatedAt: new Date().toISOString() }, null, 2)
+    );
+    console.log('✅ 空清单已生成，构建继续');
+    return;
   }
 
   await fsp.mkdir(thumbDir, { recursive: true });

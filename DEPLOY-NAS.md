@@ -388,6 +388,11 @@ EdgeOne 环境变量没加或拼错。确认后重新部署。
 ### Q4-2：卡在 `Pulling` / `net/http: request canceled ... Client.Timeout exceeded`（registry-1.docker.io 超时）
 Docker Hub 国内直连超时。按第 4.3 步的方法处理：配置镜像加速器（推荐），或在飞牛 Docker 里先手动拉取 `node:20-alpine`，或换成飞牛里已有的 Node 镜像。
 
+### 🔥 Q4-3：EdgeOne 构建失败 `prebuild` / `generate-images-metadata.js` exit code 1
+**原因**：迁移到 NAS 后本地 `public/images` 被删空/不存在，旧的元数据脚本找不到目录就 `process.exit(1)`，直接中断构建。
+**已修复**：脚本现在遇到目录不存在会生成空清单并正常退出，不再阻断构建。**确保部署的是最新代码**（GitHub 已推送 + EdgeOne 重新构建）。
+> 顺便确认 `public/images` 目录即使为空也保留一个占位文件即可（如 `.gitkeep`），兼容性更好。
+
 ### Q5：EdgeOne 连不上飞牛
 - 终端 `curl https://pic.example.com/health` 确认公网可达
 - 飞牛路由器端口转发 / 防火墙放行 443
