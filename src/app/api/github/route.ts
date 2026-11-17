@@ -3,7 +3,7 @@
 // 管理密码校验仍在 EdgeOne 侧完成，NAS 的 API Token 不会暴露给浏览器。
 
 import { NextResponse } from 'next/server';
-import { getImagesFromNas, nasUpload, nasDelete, nasDeleteBatch, nasRename, nasOrganize, isNasConfigured } from '@/lib/nas';
+import { getImagesFromNas, nasUpload, nasDelete, nasDeleteBatch, nasRename, nasOrganize, nasClassify, isNasConfigured } from '@/lib/nas';
 import { getImageUrl } from '@/lib/image-url';
 
 const DEV_FALLBACK_PASSWORD = 'admin123';
@@ -21,17 +21,18 @@ function notConfigured() {
   );
 }
 
-// 仅防路径穿越，允许空格/括号/中文等从 GitHub 迁来的旧文件名
+// 仅防路径穿越，允许空格/括号/中文，以及 pc/xxx.jpg 这样的分类子目录
 function isValidName(name: unknown): name is string {
-  return (
-    typeof name === 'string' &&
-    name.length > 0 &&
-    name.length <= 255 &&
-    !name.includes('/') &&
-    !name.includes('\\') &&
-    !name.includes('..') &&
-    !/[\x00-\x1f\x7f]/.test(name)
-  );
+  if (
+    typeof name !== 'string' ||
+    name.length === 0 ||
+    name.length > 500 ||
+    name.includes('\\') ||
+    name.includes('..') ||
+    name.startsWith('/') ||
+    /[\x00-\x1f\x7f]/.test(name)
+  ) return false;
+  return name.split('/').every(s => s.length > 0 && s !== '.' && s !== '..');
 }
 
 // 获取图片列表（管理后台用）
@@ -135,6 +136,8 @@ export async function POST(request: Request) {
     res = await nasRename(from, to);
   } else if (action === 'organize') {
     res = await nasOrganize();
+  } else if (action === 'classify') {
+    res = await nasClassify(body.undo === true);
   } else {
     return NextResponse.json({ error: '未知操作' }, { status: 400 });
   }

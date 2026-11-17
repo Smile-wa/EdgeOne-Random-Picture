@@ -99,3 +99,13 @@ export async function nasOrganize() {
   });
   return res;
 }
+
+/** 自动分类：把图片按尺寸移动到 pc/ 与 mobile/ 目录；undo=true 展平 */
+export async function nasClassify(undo = false) {
+  const res = await fetch(`${NAS_API_URL}/classify`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ undo }),
+  });
+  return res;
+}

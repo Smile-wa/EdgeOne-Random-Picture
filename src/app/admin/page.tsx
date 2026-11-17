@@ -150,6 +150,32 @@ export default function AdminPage() {
     }
   };
 
+  // 自动分类：把图片按尺寸移动到 pc/ 与 mobile/ 文件夹
+  const classifyFiles = async (undo = false) => {
+    const tip = undo
+      ? '确定要取消分类吗？\n将把 pc/ 与 mobile/ 文件夹里的图片全部移回根目录。'
+      : '确定要自动分类吗？\n将按图片尺寸（宽>高=电脑，否则=手机）把图片移动到 NAS 的 pc/ 与 mobile/ 子文件夹。';
+    if (!confirm(tip)) return;
+    setBusy(true);
+    setMessage(undo ? '正在取消分类...' : '正在自动分类...');
+    try {
+      const res = await fetch('/api/github', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${password}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'classify', undo }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '分类失败');
+      setSelected(new Set());
+      setMessage(`✅ ${undo ? '已取消分类' : '分类完成'}！移动 ${data.moved} 张${data.failed?.length ? `，失败 ${data.failed.length} 张` : ''}。当前：电脑 ${data.pcCount} 张 / 手机 ${data.mobileCount} 张。`);
+      handleLogin();
+    } catch (err: any) {
+      setMessage(`❌ 分类失败: ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 单张重命名
   const renameFile = async (oldName: string) => {
     const newName = prompt(`重命名图片\n旧文件名：${oldName}\n请输入新文件名（留空则自动生成安全名）：`, '');
@@ -331,13 +357,28 @@ export default function AdminPage() {
             <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">图库管理后台</h1>
             <p className="text-sm text-neutral-500">共 {images.length} 张图片 · 点击右下角上传，也可拖拽 / 粘贴截图，多选自动批量重命名</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap justify-end">
+            <button
+              onClick={() => classifyFiles(false)}
+              disabled={busy}
+              className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50"
+            >
+              🗂 自动分类
+            </button>
+            <button
+              onClick={() => classifyFiles(true)}
+              disabled={busy}
+              className="px-3 py-2 bg-neutral-500 text-white rounded-lg text-sm font-medium hover:bg-neutral-600 transition-colors disabled:opacity-50"
+              title="把所有图片移回根目录"
+            >
+              取消分类
+            </button>
             <button
               onClick={organizeFiles}
               disabled={busy}
               className="px-3 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
             >
-              🧹 一键整理命名
+              🧹 整理命名
             </button>
             <Link href="/gallery" className="px-4 py-2 bg-neutral-200 dark:bg-white/10 rounded-lg text-sm font-medium hover:bg-neutral-300 dark:hover:bg-white/20 transition-colors">
               返回图库

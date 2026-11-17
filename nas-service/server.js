@@ -19,6 +19,10 @@ const MANIFEST_TTL = parseInt(process.env.MANIFEST_TTL_MS || '30000', 10);
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.avif']);
 const SKIP_FILES = new Set(['index.html', 'notfound.jpg', '.DS_Store']);
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+// 自动分类子文件夹
+const PC_DIR = 'pc';
+const MOBILE_DIR = 'mobile';
+const CLASS_DIRS = [PC_DIR, MOBILE_DIR];
 
 // 生成唯一安全文件名：<毫秒时间戳36进制>-<3位随机>.<扩展名>
 function uniqueName(originalName) {
@@ -118,6 +122,16 @@ function safeName(name) {
   );
 }
 
+// 校验相对路径（允许 pc/xxx.jpg 这样的子目录，禁止越级与绝对路径）
+function safeRelPath(p) {
+  if (typeof p !== 'string' || p.length === 0 || p.length > 500) return false;
+  if (p.includes('\\') || p.includes('..') || p.startsWith('/') || path.isAbsolute(p)) return false;
+  if (/[\x00-\x1f\x7f]/.test(p)) return false;
+  const parts = p.split('/');
+  // 每一段不能为空（禁止 //）、不能是 . 或 ..
+  return parts.every((s) => s.length > 0 && s !== '.' && s !== '..');
+}
+
 function mimeOf(ext) {
   return (
     {
@@ -139,35 +153,53 @@ async function readBody(req, limit) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+// 递归收集图片文件（支持根目录与 pc/ mobile/ 子目录）
+async function collectImages(dir, prefix = '') {
+  const out = [];
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...(await collectImages(full, rel)));
+    } else if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!IMAGE_EXT.has(ext) || SKIP_FILES.has(entry.name)) continue;
+      // 若已在 pc/ 或 mobile/ 目录里，直接采用目录分类；否则稍后按尺寸判断
+      const forced = prefix === PC_DIR ? 'pc' : prefix === MOBILE_DIR ? 'mobile' : null;
+      out.push({ rel, full, forced });
+    }
+  }
+  return out;
+}
+
 async function getManifest() {
   const now = Date.now();
   if (manifestCache && now - manifestCacheAt < MANIFEST_TTL) return manifestCache;
 
-  const entries = await fsp.readdir(DATA_DIR, { withFileTypes: true });
+  const files = await collectImages(DATA_DIR);
   const pc = [];
   const mobile = [];
 
   await Promise.all(
-    entries.map(async (entry) => {
-      if (!entry.isFile() || SKIP_FILES.has(entry.name)) return;
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!IMAGE_EXT.has(ext)) return;
-      const filePath = path.join(DATA_DIR, entry.name);
+    files.map(async ({ rel, full, forced }) => {
       try {
-        const buf = await fsp.readFile(filePath);
+        const buf = await fsp.readFile(full);
         const dim = getImageSize(buf);
         if (!dim || !dim.width || !dim.height) return;
-        const stat = await fsp.stat(filePath);
+        const stat = await fsp.stat(full);
         const item = {
-          src: entry.name,
+          src: rel, // 相对路径，如 "pc/xxx.jpg" 或 "xxx.jpg"
           width: dim.width,
           height: dim.height,
           size: (stat.size / 1024).toFixed(2) + ' KB',
           mtime: stat.mtime.toISOString(),
         };
-        (dim.width > dim.height ? pc : mobile).push(item);
+        const isPc = forced ? forced === 'pc' : dim.width > dim.height;
+        (isPc ? pc : mobile).push(item);
       } catch (e) {
-        console.warn('[manifest] skip', entry.name, e.message);
+        console.warn('[manifest] skip', rel, e.message);
       }
     })
   );
@@ -202,10 +234,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && pathname.startsWith('/images/')) {
       const name = pathname.slice('/images/'.length);
-      if (!safeName(name)) return send(res, 400, { error: '非法文件名' });
+      if (!safeRelPath(name)) return send(res, 400, { error: '非法文件名' });
       const ext = path.extname(name).toLowerCase();
       if (!IMAGE_EXT.has(ext)) return send(res, 404, { error: '不支持的类型' });
-      const filePath = path.join(DATA_DIR, name);
+      const filePath = path.resolve(DATA_DIR, name);
+      if (!filePath.startsWith(DATA_DIR + path.sep)) return send(res, 400, { error: '非法路径' });
       try {
         const buf = await fsp.readFile(filePath);
         const etag = '"' + crypto.createHash('md5').update(buf).digest('hex') + '"';
@@ -239,7 +272,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/upload' && req.method === 'PUT') {
       const body = JSON.parse(await readBody(req, MAX_UPLOAD_BYTES * 2));
       const { name, base64Content } = body;
-      if (!safeName(name)) return send(res, 400, { error: '非法文件名' });
+      // 允许客户端传 "pc/xxx.jpg" 这种带分类目录的名字
+      if (!safeRelPath(name)) return send(res, 400, { error: '非法文件名' });
       const ext = path.extname(name).toLowerCase();
       if (!IMAGE_EXT.has(ext)) return send(res, 400, { error: '不支持的图片格式' });
       if (typeof base64Content !== 'string') return send(res, 400, { error: '缺少图片内容' });
@@ -247,18 +281,30 @@ const server = http.createServer(async (req, res) => {
       if (!buf.length || buf.length > MAX_UPLOAD_BYTES) return send(res, 400, { error: '图片为空或超过 20MB' });
       const dim = getImageSize(buf);
       if (!dim || !dim.width || !dim.height) return send(res, 400, { error: '无法识别的图片' });
-      await fsp.mkdir(DATA_DIR, { recursive: true });
-      await fsp.writeFile(path.join(DATA_DIR, name), buf, { flag: 'wx' });
+
+      // 若客户端未指定分类目录，则按尺寸自动放入 pc/ 或 mobile/
+      let rel = name;
+      const firstSeg = name.split('/')[0];
+      if (!CLASS_DIRS.includes(firstSeg)) {
+        const dir = dim.width > dim.height ? PC_DIR : MOBILE_DIR;
+        rel = `${dir}/${name}`;
+      }
+      const full = path.resolve(DATA_DIR, rel);
+      if (!full.startsWith(DATA_DIR + path.sep)) return send(res, 400, { error: '非法路径' });
+      await fsp.mkdir(path.dirname(full), { recursive: true });
+      await fsp.writeFile(full, buf, { flag: 'wx' });
       manifestCacheAt = 0;
-      return send(res, 200, { success: true, name, width: dim.width, height: dim.height });
+      return send(res, 200, { success: true, name: rel, width: dim.width, height: dim.height });
     }
 
     if (pathname === '/delete' && req.method === 'DELETE') {
       const body = JSON.parse(await readBody(req, 1024 * 8));
       const { name } = body;
-      if (!safeName(name)) return send(res, 400, { error: '非法文件名' });
+      if (!safeRelPath(name)) return send(res, 400, { error: '非法文件名' });
+      const full = path.resolve(DATA_DIR, name);
+      if (!full.startsWith(DATA_DIR + path.sep)) return send(res, 400, { error: '非法路径' });
       try {
-        await fsp.unlink(path.join(DATA_DIR, name));
+        await fsp.unlink(full);
       } catch (e) {
         if (e.code === 'ENOENT') return send(res, 404, { error: '图片不存在' });
         throw e;
@@ -274,9 +320,11 @@ const server = http.createServer(async (req, res) => {
       let deleted = 0;
       const failed = [];
       for (const name of names) {
-        if (!safeName(name)) { failed.push({ name, reason: '非法文件名' }); continue; }
+        if (!safeRelPath(name)) { failed.push({ name, reason: '非法文件名' }); continue; }
+        const full = path.resolve(DATA_DIR, name);
+        if (!full.startsWith(DATA_DIR + path.sep)) { failed.push({ name, reason: '非法路径' }); continue; }
         try {
-          await fsp.unlink(path.join(DATA_DIR, name));
+          await fsp.unlink(full);
           deleted++;
         } catch (e) {
           failed.push({ name, reason: e.code === 'ENOENT' ? '不存在' : e.message });
@@ -290,17 +338,20 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/rename' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req, 1024 * 8));
       const { from, to } = body;
-      if (!safeName(from)) return send(res, 400, { error: '原文件名不合法' });
-      const src = path.join(DATA_DIR, from);
-      let stat;
-      try { stat = await fsp.stat(src); } catch { return send(res, 404, { error: '文件不存在' }); }
-      // 目标名：显式指定或自动生成；统一补上正确的原扩展名
+      if (!safeRelPath(from)) return send(res, 400, { error: '原文件名不合法' });
+      const src = path.resolve(DATA_DIR, from);
+      if (!src.startsWith(DATA_DIR + path.sep)) return send(res, 400, { error: '非法路径' });
+      try { await fsp.stat(src); } catch { return send(res, 404, { error: '文件不存在' }); }
+      // 保留原目录；若 to 不含 "/" 则放到 from 所在目录
+      const dirPart = path.dirname(from);
       const ext = path.extname(from) || '.jpg';
-      let target = (typeof to === 'string' && to) ? to : uniqueName(from);
-      if (!path.extname(target)) target += ext;
-      if (!safeName(target)) return send(res, 400, { error: '目标文件名不合法' });
+      let targetBase = (typeof to === 'string' && to) ? to : uniqueName(path.basename(from));
+      if (!path.extname(targetBase)) targetBase += ext;
+      const target = dirPart && dirPart !== '.' ? `${dirPart}/${targetBase}` : targetBase;
+      if (!safeRelPath(target)) return send(res, 400, { error: '目标文件名不合法' });
       if (target === from) return send(res, 200, { success: true, from, to: target, unchanged: true });
-      const dst = path.join(DATA_DIR, target);
+      const dst = path.resolve(DATA_DIR, target);
+      if (!dst.startsWith(DATA_DIR + path.sep)) return send(res, 400, { error: '非法路径' });
       try { await fsp.stat(dst); return send(res, 400, { error: '目标文件名已存在' }); } catch {}
       await fsp.rename(src, dst);
       manifestCacheAt = 0;
@@ -309,26 +360,87 @@ const server = http.createServer(async (req, res) => {
 
     // 一键整理：POST /organize  — 把所有「不安全」文件名（空格/括号/中文等）自动重命名为安全唯一名
     if (pathname === '/organize' && req.method === 'POST') {
-      const entries = await fsp.readdir(DATA_DIR, { withFileTypes: true });
+      const all = await collectImages(DATA_DIR);
       const renamed = [];
       const failed = [];
-      for (const entry of entries) {
-        if (!entry.isFile()) continue;
-        const ext = path.extname(entry.name).toLowerCase();
-        if (!IMAGE_EXT.has(ext) || SKIP_FILES.has(entry.name)) continue;
+      for (const { rel, full } of all) {
+        const base = path.basename(rel);
         // 只整理「含空格/括号/非ASCII等」的不安全文件名；
         // 已经是纯 ASCII 且无空格括号的名字（含本工具生成的名字）保持不动。
-        if (/^[\w.\-]+$/.test(entry.name)) continue;
-        const target = uniqueName(entry.name);
+        if (/^[\w.\-]+$/.test(base)) continue;
+        const targetBase = uniqueName(base);
+        const dirPart = path.dirname(rel);
+        const target = dirPart && dirPart !== '.' ? `${dirPart}/${targetBase}` : targetBase;
         try {
-          await fsp.rename(path.join(DATA_DIR, entry.name), path.join(DATA_DIR, target));
-          renamed.push({ from: entry.name, to: target });
+          await fsp.rename(full, path.resolve(DATA_DIR, target));
+          renamed.push({ from: rel, to: target });
         } catch (e) {
-          failed.push({ from: entry.name, reason: e.message });
+          failed.push({ from: rel, reason: e.message });
         }
       }
       if (renamed.length) manifestCacheAt = 0;
       return send(res, 200, { success: true, renamedCount: renamed.length, renamed, failed });
+    }
+
+    // 自动分类：POST /classify  { undo?: boolean }
+    // 按图片尺寸把根目录图片移动到 pc/ 与 mobile/ 子文件夹；
+    // undo=true 时把所有子目录图片移回根目录。
+    if (pathname === '/classify' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req, 1024 * 8).catch(() => '{}'));
+      const undo = body.undo === true;
+      let moved = 0;
+      const failed = [];
+
+      if (undo) {
+        // 展平：pc/ 与 mobile/ 里的图片移回根目录
+        for (const d of CLASS_DIRS) {
+          const dir = path.join(DATA_DIR, d);
+          let entries = [];
+          try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+          for (const e of entries) {
+            if (!e.isFile()) continue;
+            const ext = path.extname(e.name).toLowerCase();
+            if (!IMAGE_EXT.has(ext)) continue;
+            let dest = path.join(DATA_DIR, e.name);
+            // 根目录若有同名文件，追加序号避免覆盖
+            let i = 1;
+            while (true) {
+              try { await fsp.stat(dest); dest = path.join(DATA_DIR, `${Date.now().toString(36)}-${i++}${ext}`); }
+              catch { break; }
+            }
+            try { await fsp.rename(path.join(dir, e.name), dest); moved++; }
+            catch (err) { failed.push({ from: `${d}/${e.name}`, reason: err.message }); }
+          }
+        }
+      } else {
+        // 分类：读取根目录图片，按尺寸移动到子目录
+        const entries = await fsp.readdir(DATA_DIR, { withFileTypes: true });
+        for (const d of CLASS_DIRS) await fsp.mkdir(path.join(DATA_DIR, d), { recursive: true });
+        for (const e of entries) {
+          if (!e.isFile()) continue;
+          const ext = path.extname(e.name).toLowerCase();
+          if (!IMAGE_EXT.has(ext) || SKIP_FILES.has(e.name)) continue;
+          try {
+            const buf = await fsp.readFile(path.join(DATA_DIR, e.name));
+            const dim = getImageSize(buf);
+            if (!dim || !dim.width || !dim.height) continue;
+            const targetDir = dim.width > dim.height ? PC_DIR : MOBILE_DIR;
+            await fsp.rename(path.join(DATA_DIR, e.name), path.join(DATA_DIR, targetDir, e.name));
+            moved++;
+          } catch (err) {
+            failed.push({ from: e.name, reason: err.message });
+          }
+        }
+      }
+      manifestCacheAt = 0;
+      const layout = await getManifest();
+      return send(res, 200, {
+        success: true,
+        moved,
+        failed,
+        pcCount: layout.pc.length,
+        mobileCount: layout.mobile.length,
+      });
     }
 
     return send(res, 404, { error: 'Not Found' });

@@ -1,5 +1,8 @@
+import { cookies } from 'next/headers';
 import { getImages } from '@/lib/images';
+import { isGalleryProtected, verifyToken, GALLERY_COOKIE } from '@/lib/gallery-auth';
 import GalleryClient from './GalleryClient';
+import GalleryLogin from './GalleryLogin';
 import type { TypedImage } from '@/types';
 
 export const metadata = {
@@ -11,6 +14,16 @@ export const metadata = {
 export const dynamic = 'force-dynamic';
 
 export default async function GalleryPage() {
+  // 密码保护校验
+  const protectedGallery = isGalleryProtected();
+  if (protectedGallery) {
+    const cookieStore = await cookies();
+    const token = cookieStore.get(GALLERY_COOKIE)?.value;
+    if (!verifyToken(token)) {
+      return <GalleryLogin />;
+    }
+  }
+
   const { pc, mobile } = await getImages();
   // 服务端保持确定性顺序，随机排序移至客户端以支持 SSG 缓存
   const allImages: TypedImage[] = [
@@ -18,5 +31,5 @@ export default async function GalleryPage() {
     ...mobile.map(img => ({ ...img, type: 'Mobile' as const })),
   ];
 
-  return <GalleryClient initialImages={allImages} />;
+  return <GalleryClient initialImages={allImages} galleryProtected={protectedGallery} />;
 }

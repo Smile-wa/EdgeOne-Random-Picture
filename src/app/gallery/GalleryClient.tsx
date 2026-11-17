@@ -40,12 +40,16 @@ function sortImages(images: TypedImage[], mode: SortMode): TypedImage[] {
 
 interface GalleryClientProps {
   initialImages: TypedImage[];
+  galleryProtected?: boolean;
 }
 
-export default function GalleryClient({ initialImages }: GalleryClientProps) {
+type TypeFilter = 'all' | 'PC' | 'Mobile';
+
+export default function GalleryClient({ initialImages, galleryProtected = false }: GalleryClientProps) {
   const [mounted, setMounted] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<SortMode>('random');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
   const [selectedImage, setSelectedImage] = useState<TypedImage | null>(null);
   const [copied, setCopied] = useState(false);
@@ -67,17 +71,32 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
 
   const filteredImages = useMemo(() => {
     let result = initialImages || [];
+    if (typeFilter !== 'all') {
+      result = result.filter(img => img.type === typeFilter);
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(img => img.src.toLowerCase().includes(q));
     }
     if (!mounted && sortMode === 'random') return result;
     return sortImages(result, sortMode);
-  }, [initialImages, searchQuery, sortMode, mounted]);
+  }, [initialImages, searchQuery, sortMode, mounted, typeFilter]);
+
+  // 各类型的数量，用于筛选按钮显示
+  const counts = useMemo(() => ({
+    all: initialImages.length,
+    PC: initialImages.filter(i => i.type === 'PC').length,
+    Mobile: initialImages.filter(i => i.type === 'Mobile').length,
+  }), [initialImages]);
+
+  const logout = async () => {
+    await fetch('/api/gallery-auth', { method: 'DELETE' });
+    window.location.reload();
+  };
 
   useEffect(() => {
     setVisibleCount(BATCH_SIZE);
-  }, [searchQuery, sortMode]);
+  }, [searchQuery, sortMode, typeFilter]);
 
   useEffect(() => {
     if (!sentinelRef.current || visibleCount >= filteredImages.length) return;
@@ -228,11 +247,40 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
             <ThemeToggle />
           </div>
         </div>
+
+        {/* 类型筛选 + 退出登录 */}
+        <div className="flex items-center gap-1.5 px-3 md:px-6 pb-2 overflow-x-auto">
+          {([
+            ['all', '全部', counts.all],
+            ['PC', '电脑', counts.PC],
+            ['Mobile', '手机', counts.Mobile],
+          ] as [TypeFilter, string, number][]).map(([val, label, count]) => (
+            <button
+              key={val}
+              onClick={() => setTypeFilter(val)}
+              className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors shrink-0 ${
+                typeFilter === val
+                  ? 'bg-neutral-900 text-white dark:bg-white dark:text-black'
+                  : 'bg-neutral-100 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-white/20'
+              }`}
+            >
+              {label} ({count})
+            </button>
+          ))}
+          {galleryProtected && (
+            <button
+              onClick={logout}
+              className="ml-auto px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap shrink-0 bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 hover:opacity-80 transition-opacity"
+            >
+              退出
+            </button>
+          )}
+        </div>
       </header>
 
       <main
         ref={gridRef}
-        className="pt-[60px] px-3 md:px-4 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] auto-rows-[130px] md:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] md:auto-rows-[160px] grid-flow-dense gap-2.5 pb-20 max-w-[2000px] mx-auto"
+        className="pt-[92px] px-3 md:px-4 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] auto-rows-[130px] md:grid-cols-[repeat(auto-fill,minmax(180px,1fr))] md:auto-rows-[160px] grid-flow-dense gap-2.5 pb-20 max-w-[2000px] mx-auto"
         role="list"
         aria-label="图片列表"
       >
